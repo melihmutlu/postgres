@@ -10385,7 +10385,7 @@ python_libdir=`${PYTHON} -c "import sysconfig; print(' '.join(filter(None,syscon
 python_ldlibrary=`${PYTHON} -c "import sysconfig; print(' '.join(filter(None,sysconfig.get_config_vars('LDLIBRARY'))))"`
 
 # If LDLIBRARY exists and has a shlib extension, use it verbatim.
-ldlibrary=`echo "${python_ldlibrary}" | sed -e 's/\.so$//' -e 's/\.dll$//' -e 's/\.dylib$//' -e 's/\.sl$//'`
+ldlibrary=`echo "${python_ldlibrary}" | sed -e 's/\.so$//' -e 's/\.dll$//' -e 's/\.dylib$//' -e 's/\.sl$//', -e 's/\.dll.a$//'`
 if test -e "${python_libdir}/${python_ldlibrary}" -a x"${python_ldlibrary}" != x"${ldlibrary}"
 then
 	ldlibrary=`echo "${ldlibrary}" | sed "s/^lib//"`
