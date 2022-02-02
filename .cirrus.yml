@@ -448,7 +448,7 @@ task:
   name: WindowsMingw64
   only_if: $CIRRUS_CHANGE_MESSAGE !=~ '.*\nci-os-only:.*' || $CIRRUS_CHANGE_MESSAGE =~ '.*\nci-os-only:[^\n]*windows.*'
   windows_container:
-    dockerfile: $CONTAINER_REPO/windows_ci_mingw64:latest
+    image: $CONTAINER_REPO/windows_ci_mingw64:latest
     cpu: 4
     memory: 4G
   env:
