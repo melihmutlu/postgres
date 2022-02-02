@@ -454,7 +454,11 @@ task:
   env:
     # The default working dir is in a directory msbuild complains about
     CIRRUS_WORKING_DIR: "c:/cirrus"
+    CCACHE_DIR: /tmp/ccache_dir
     TEMP_CONFIG: ${CIRRUS_WORKING_DIR}/ci/pg_ci_base.conf
+ 
+  ccache_cache:
+    folder: ${CCACHE_DIR}
 
   sysinfo_script:
     - chcp
@@ -466,23 +470,26 @@ task:
 
   configure_script: 
     - C:\msys64\usr\bin\bash.exe -lc "cd %CIRRUS_WORKING_DIR% && \
-      ./configure PERL=/c/strawberry/perl/bin  \
+      ./configure \
         --host=x86_64-w64-mingw32 \
         --enable-cassert \
         --with-icu \
         --with-ldap \
         --with-libxml \
         --with-libxslt \
-        --with-lz4"
+        --with-lz4 \
+        CC='ccache gcc'"
 
   build_script:
-    C:\msys64\usr\bin\bash.exe -lc "cd %CIRRUS_WORKING_DIR% && make -j${CPUS} PERL=/c/strawberry/perl/bin/perl.exe"
+    C:\msys64\usr\bin\bash.exe -lc "cd %CIRRUS_WORKING_DIR% && make -j${CPUS}"
+
+  upload_caches: ccache
 
   install_script:
     C:\msys64\usr\bin\bash.exe -lc "cd %CIRRUS_WORKING_DIR% && make install"
 
   tests_script:
-    C:\msys64\usr\bin\bash.exe -lc "cd %CIRRUS_WORKING_DIR% && make ${CHECK} ${CHECKFLAGS}"
+    C:\msys64\usr\bin\bash.exe -lc "cd %CIRRUS_WORKING_DIR% && make ${CHECK} ${CHECKFLAGS} -j${CPUS}"
 
   on_failure: *on_failure
 
