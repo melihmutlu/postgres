@@ -61,12 +61,11 @@ INCS = 	plpython.h \
 ifeq ($(PORTNAME), win32)
 
 pytverstr=$(subst .,,${python_version})
-PYTHONDLL='/c/msys64/mingw64/bin/libpython3.9.dll'
+PYTHONDLL=$(subst \,/,$(WINDIR))/system32/python${pytverstr}.dll
 
 OBJS += libpython${pytverstr}.a
 
 libpython${pytverstr}.a: python${pytverstr}.def
-	sed -i 's/LIBRARY libpython3.9.dll/LIBRARY python39.dll/' python39.def
 	dlltool --dllname python${pytverstr}.dll --def python${pytverstr}.def --output-lib libpython${pytverstr}.a
 
 python${pytverstr}.def:
