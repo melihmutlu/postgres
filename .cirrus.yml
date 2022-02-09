@@ -445,7 +445,7 @@ task:
 
 
 task:
-  name: WindowsMingw64
+  name: Windows - Server 2019, MinGW64
   only_if: $CIRRUS_CHANGE_MESSAGE !=~ '.*\nci-os-only:.*' || $CIRRUS_CHANGE_MESSAGE =~ '.*\nci-os-only:[^\n]*windows.*'
   windows_container:
     image: $CONTAINER_REPO/windows_ci_mingw64:latest
@@ -475,7 +475,6 @@ task:
         --enable-cassert 
         --enable-tap-tests
         --with-icu 
-        --with-ldap 
         --with-libxml 
         --with-libxslt 
         --with-lz4 
@@ -485,9 +484,6 @@ task:
     C:\msys64\usr\bin\bash.exe -lc "cd %CIRRUS_WORKING_DIR% && make -j${CPUS}"
 
   upload_caches: ccache
-
-  install_script:
-    C:\msys64\usr\bin\bash.exe -lc "cd %CIRRUS_WORKING_DIR% && make install"
 
   tests_script:
     C:\msys64\usr\bin\bash.exe -lc "cd %CIRRUS_WORKING_DIR% && make ${CHECK} ${CHECKFLAGS}"
