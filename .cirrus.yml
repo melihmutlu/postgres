@@ -473,6 +473,7 @@ task:
       ./configure 
         --host=x86_64-w64-mingw32 
         --enable-cassert 
+        --enable-tap-tests
         --with-icu 
         --with-ldap 
         --with-libxml 
