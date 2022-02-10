@@ -469,6 +469,7 @@ task:
     - C:\msys64\usr\bin\bash.exe -lc "perl --version"
 
   configure_script: 
+    - C:\msys64\usr\bin\bash.exe -lc "ccache -C"
     - C:\msys64\usr\bin\bash.exe -lc "cd %CIRRUS_WORKING_DIR% &&
       ./configure 
         --host=x86_64-w64-mingw32 
