@@ -455,7 +455,7 @@ task:
     cpu: $CPUS
     memory: 4G
   env:
-    CCACHE_DIR: /c/tmp/ccache_dir
+    CCACHE_DIR: C:\msys64\ccache
  
   ccache_cache:
     folder: ${CCACHE_DIR}
