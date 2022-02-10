@@ -338,6 +338,10 @@ WINDOWS_ENVIRONMENT_BASE: &WINDOWS_ENVIRONMENT_BASE
       # The default working dir is in a directory msbuild complains about
       CIRRUS_WORKING_DIR: "c:/cirrus"
       TEMP_CONFIG: ${CIRRUS_WORKING_DIR}/src/tools/ci/pg_ci_base.conf
+
+      # Avoids port conflicts between concurrent tap test runs
+      PG_TEST_USE_UNIX_SOCKETS: 1
+      PG_REGRESS_SOCK_DIR: "c:/cirrus/"
     
     only_if: $CIRRUS_CHANGE_MESSAGE !=~ '.*\nci-os-only:.*' || $CIRRUS_CHANGE_MESSAGE =~ '.*\nci-os-only:[^\n]*windows.*'
       
@@ -367,9 +371,6 @@ task:
     # git's tar doesn't deal with drive letters, see
     # https://postgr.es/m/b6782dc3-a7b0-ed56-175f-f8f54cb08d67%40dunslane.net
     TAR: "c:/windows/system32/tar.exe"
-    # Avoids port conflicts between concurrent tap test runs
-    PG_TEST_USE_UNIX_SOCKETS: 1
-    PG_REGRESS_SOCK_DIR: "c:/cirrus/"
     # -m enables parallelism
     # verbosity:minimal + Summary reduce verbosity, while keeping a summary of
     #   errors/warnings
@@ -454,7 +455,7 @@ task:
     cpu: $CPUS
     memory: 4G
   env:
-    CCACHE_DIR: /tmp/ccache_dir
+    CCACHE_DIR: /c/tmp/ccache_dir
  
   ccache_cache:
     folder: ${CCACHE_DIR}
@@ -475,6 +476,7 @@ task:
         --with-libxml 
         --with-libxslt 
         --with-lz4 
+        --enable-debug
         CC='ccache gcc'"
 
   build_script:
