@@ -23,7 +23,6 @@ env:
   CHECKFLAGS: -Otarget
   PROVE_FLAGS: --timer
   PGCTLTIMEOUT: 120 # avoids spurious failures during parallel tests
-  TEMP_CONFIG: ${CIRRUS_WORKING_DIR}/src/tools/ci/pg_ci_base.conf
   PG_TEST_EXTRA: kerberos ldap ssl
 
 
@@ -332,13 +331,28 @@ task:
     cores_script: src/tools/ci/cores_backtrace.sh macos "${HOME}/cores"
 
 
+WINDOWS_ENVIRONMENT_BASE: &WINDOWS_ENVIRONMENT_BASE
+    env:
+      # Half the allowed per-user CPU cores
+      CPUS: 4
+      # The default working dir is in a directory msbuild complains about
+      CIRRUS_WORKING_DIR: "c:/cirrus"
+      TEMP_CONFIG: ${CIRRUS_WORKING_DIR}/src/tools/ci/pg_ci_base.conf
+    
+    only_if: $CIRRUS_CHANGE_MESSAGE !=~ '.*\nci-os-only:.*' || $CIRRUS_CHANGE_MESSAGE =~ '.*\nci-os-only:[^\n]*windows.*'
+      
+    sysinfo_script: |
+      chcp
+      systeminfo
+      powershell -Command get-psdrive -psprovider filesystem
+      set
+
+
 task:
+  << : *WINDOWS_ENVIRONMENT_BASE
   name: Windows - Server 2019, VS 2019
 
   env:
-    # Half the allowed per-user CPU cores
-    CPUS: 4
-
     # Our windows infrastructure doesn't have test concurrency above the level
     # of a single vcregress test target. Due to that, it's useful to run prove
     # with multiple jobs. For the other tasks it isn't, because two sources
@@ -348,8 +362,6 @@ task:
     # likely can be improved upon further.
     PROVE_FLAGS: -j10 --timer
 
-    # The default cirrus working dir is in a directory msbuild complains about
-    CIRRUS_WORKING_DIR: "c:/cirrus"
     # Avoid re-installing over and over
     NO_TEMP_INSTALL: 1
     # git's tar doesn't deal with drive letters, see
@@ -373,19 +385,10 @@ task:
     # "suites".
     T_C: "\"C:/Program Files/Git/usr/bin/timeout.exe\" -v -k60s 15m"
 
-
-  only_if: $CIRRUS_CHANGE_MESSAGE !=~ '.*\nci-os-only:.*' || $CIRRUS_CHANGE_MESSAGE =~ '.*\nci-os-only:[^\n]*windows.*'
-
   windows_container:
     image: $CONTAINER_REPO/windows_ci_vs_2019:latest
     cpu: $CPUS
     memory: 4G
-
-  sysinfo_script: |
-    chcp
-    systeminfo
-    powershell -Command get-psdrive -psprovider filesystem
-    set
 
   configure_script:
     # copy errors out when using forward slashes
@@ -443,30 +446,24 @@ task:
       path: "crashlog-**.txt"
       type: text/plain
 
-
 task:
+  << : *WINDOWS_ENVIRONMENT_BASE
   name: Windows - Server 2019, MinGW64
-  only_if: $CIRRUS_CHANGE_MESSAGE !=~ '.*\nci-os-only:.*' || $CIRRUS_CHANGE_MESSAGE =~ '.*\nci-os-only:[^\n]*windows.*'
   windows_container:
     image: $CONTAINER_REPO/windows_ci_mingw64:latest
-    cpu: 4
+    cpu: $CPUS
     memory: 4G
   env:
-    # The default working dir is in a directory msbuild complains about
-    CIRRUS_WORKING_DIR: "c:/cirrus"
     CCACHE_DIR: /tmp/ccache_dir
-    TEMP_CONFIG: ${CIRRUS_WORKING_DIR}/src/tools/ci/pg_ci_base.conf
  
   ccache_cache:
     folder: ${CCACHE_DIR}
 
-  sysinfo_script:
-    - chcp
-    - systeminfo
-    - powershell -Command get-psdrive -psprovider filesystem
+  mingw_info_script:
+    - C:\msys64\usr\bin\bash.exe -lc "where gcc"
     - C:\msys64\usr\bin\bash.exe -lc "gcc --version"
-    - ps: Get-Item -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AeDebug'
-    - set
+    - C:\msys64\usr\bin\bash.exe -lc "where perl"
+    - C:\msys64\usr\bin\bash.exe -lc "perl --version"
 
   configure_script: 
     - C:\msys64\usr\bin\bash.exe -lc "cd %CIRRUS_WORKING_DIR% &&
@@ -481,15 +478,14 @@ task:
         CC='ccache gcc'"
 
   build_script:
-    C:\msys64\usr\bin\bash.exe -lc "cd %CIRRUS_WORKING_DIR% && make -j${CPUS}"
+    C:\msys64\usr\bin\bash.exe -lc "cd %CIRRUS_WORKING_DIR% && make -s world-bin -j${CPUS}"
 
   upload_caches: ccache
 
   tests_script:
-    C:\msys64\usr\bin\bash.exe -lc "cd %CIRRUS_WORKING_DIR% && make ${CHECK} ${CHECKFLAGS}"
+    C:\msys64\usr\bin\bash.exe -lc "cd %CIRRUS_WORKING_DIR% && make -s ${CHECK} ${CHECKFLAGS} -j${CPUS}"
 
   on_failure: *on_failure
-
 
 task:
   name: CompilerWarnings
