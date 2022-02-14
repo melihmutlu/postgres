@@ -457,6 +457,7 @@ task:
     memory: 4G
   env:
     CCACHE_DIR: C:/msys64/ccache
+    BUILD_DIR: /c/build
 
   ccache_cache:
     folder: ${CCACHE_DIR}
@@ -468,8 +469,10 @@ task:
     - C:\msys64\usr\bin\bash.exe -lc "perl --version"
 
   configure_script: 
-    - C:\msys64\usr\bin\bash.exe -lc "cd %CIRRUS_WORKING_DIR% &&
-      ./configure 
+    - C:\msys64\usr\bin\bash.exe -lc " mkdir %BUILD_DIR% &&
+      cd %BUILD_DIR% &&
+      %CIRRUS_WORKING_DIR%/configure 
+        --prefix=%BUILD_DIR%
         --host=x86_64-w64-mingw32 
         --enable-cassert 
         --enable-tap-tests
@@ -478,20 +481,22 @@ task:
         --with-libxslt 
         --with-lz4 
         --enable-debug
-        CC='ccache gcc'"
+        CC='ccache gcc'
+        CXX='ccache g++'"
 
   build_script:
-    C:\msys64\usr\bin\bash.exe -lc "cd %CIRRUS_WORKING_DIR% && make -s world-bin -j${CPUS}"
+    C:\msys64\usr\bin\bash.exe -lc "cd %BUILD_DIR% && make -s world-bin -j${CPUS}"
 
   temp_install_script:
-    C:\msys64\usr\bin\bash.exe -lc "cd %CIRRUS_WORKING_DIR% && make -s -j${CPUS} temp-install"
+    C:\msys64\usr\bin\bash.exe -lc "cd %BUILD_DIR% && make -s -j${CPUS} temp-install"
 
   upload_caches: ccache
 
   tests_script:
-    C:\msys64\usr\bin\bash.exe -lc "cd %CIRRUS_WORKING_DIR% && make ${CHECK} ${CHECKFLAGS} -j${CPUS} NO_TEMP_INSTALL=1 TMPDIR=C:/cirrus/pg_regress_sock_dir"
+    C:\msys64\usr\bin\bash.exe -lc "cd %BUILD_DIR% && make ${CHECK} ${CHECKFLAGS} -j${CPUS} NO_TEMP_INSTALL=1 TMPDIR=%BUILD_DIR%/tmp_install"
 
   on_failure: *on_failure
+
 
 task:
   name: CompilerWarnings
