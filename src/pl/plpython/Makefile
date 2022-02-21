@@ -61,7 +61,8 @@ INCS = 	plpython.h \
 ifeq ($(PORTNAME), win32)
 
 pytverstr=$(subst .,,${python_version})
-PYTHONDLL=$(subst \,/,$(WINDIR))/system32/python${pytverstr}.dll
+#PYTHONDLL=$(subst \,/,$(WINDIR))/system32/python${pytverstr}.dll
+PYTHONDLL=/ucrt64/bin/libpython3.9.dll
 
 OBJS += libpython${pytverstr}.a
 
