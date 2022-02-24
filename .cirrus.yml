@@ -453,6 +453,7 @@ task:
     memory: 4G
   env:
     CCACHE_DIR: C:/msys64/ccache
+    BUILD_DIR: "%CIRRUS_WORKING_DIR%/build"
 
   ccache_cache:
     folder: ${CCACHE_DIR}
@@ -464,7 +465,8 @@ task:
     - C:\msys64\usr\bin\bash.exe -lc "perl --version"
 
   configure_script:
-    - C:\msys64\usr\bin\bash.exe -lc "cd %CIRRUS_WORKING_DIR% &&
+    - C:\msys64\usr\bin\bash.exe -lc " mkdir %BUILD_DIR% &&
+      cd %BUILD_DIR% &&
       %CIRRUS_WORKING_DIR%/configure
         --host=x86_64-w64-mingw32
         --enable-cassert
@@ -478,12 +480,15 @@ task:
         CXX='ccache g++'"
 
   build_script:
-    C:\msys64\usr\bin\bash.exe -lc "cd %CIRRUS_WORKING_DIR% && make -s world-bin -j${CPUS}"
+    C:\msys64\usr\bin\bash.exe -lc "cd %BUILD_DIR% && make -s world-bin -j${CPUS}"
+
+  temp_install_script:
+    C:\msys64\usr\bin\bash.exe -lc "cd %BUILD_DIR% && make -s -j${CPUS} temp-install"
 
   upload_caches: ccache
 
   tests_script:
-    C:\msys64\usr\bin\bash.exe -lc "cd %CIRRUS_WORKING_DIR% && make -s ${CHECK} ${CHECKFLAGS} -j${CPUS} TMPDIR=%CIRRUS_WORKING_DIR%/tmp_install"
+    C:\msys64\usr\bin\bash.exe -lc "cd %BUILD_DIR% && make -s ${CHECK} ${CHECKFLAGS} -j${CPUS} NO_TEMP_INSTALL=1 TMPDIR=%BUILD_DIR%/tmp_install"
 
   on_failure: *on_failure
 
