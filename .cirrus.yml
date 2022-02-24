@@ -454,7 +454,7 @@ task:
     memory: 4G
   env:
     CCACHE_DIR: C:/msys64/ccache
-    BUILD_DIR: /c/build
+    BUILD_DIR: "%CIRRUS_WORKING_DIR%/build"
 
   ccache_cache:
     folder: ${CCACHE_DIR}
