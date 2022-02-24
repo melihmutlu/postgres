@@ -171,10 +171,10 @@ task:
   matrix:
     - name: "Linux - Debian Bullseye - Sanitizer: Alignment, Undefined"
       env:
-        EXTRA_CFLAGS: -Og -fsanitize=alignment,undefined -fno-sanitize=nonnull-attribute -fno-sanitize=float-cast-overflow -fno-sanitize-recover=all
+        EXTRA_CFLAGS: -Og -fsanitize=alignment,undefined -fno-sanitize=float-cast-overflow -fno-sanitize-recover=all
     - name: "Linux - Debian Bullseye - Sanitizer: Alignment, Undefined, Address"
       env:
-        EXTRA_CFLAGS: -Og -fsanitize=address,alignment,undefined -fno-sanitize=nonnull-attribute -fno-sanitize=float-cast-overflow -fno-sanitize-recover=all
+        EXTRA_CFLAGS: -Og -fsanitize=address,alignment,undefined -fno-sanitize=float-cast-overflow -fno-sanitize-recover=all
         EXTRA_LDFLAGS: -fno-common
 
 
