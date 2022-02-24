@@ -33,6 +33,7 @@ on_failure: &on_failure
       - "**/*.log"
       - "**/*.diffs"
       - "**/regress_log_*"
+      - "/c/build/**/*.diffs"
     type: text/plain
 
 task:
@@ -464,6 +465,10 @@ task:
     - C:\msys64\usr\bin\bash.exe -lc "where perl"
     - C:\msys64\usr\bin\bash.exe -lc "perl --version"
 
+  # task to install python and gendef since the image does not have those. later move this step to the image
+  install_python_script:
+    - C:\msys64\usr\bin\bash.exe -lc "pacman -S --noconfirm mingw-w64-ucrt-x86_64-python mingw-w64-ucrt-x86_64-tools-git"
+
   configure_script:
     - C:\msys64\usr\bin\bash.exe -lc " mkdir %BUILD_DIR% &&
       cd %BUILD_DIR% &&
@@ -475,6 +480,7 @@ task:
         --with-libxml
         --with-libxslt
         --with-lz4
+        --with-python
         --enable-debug
         CC='ccache gcc'
         CXX='ccache g++'"
