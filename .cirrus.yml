@@ -30,11 +30,15 @@ env:
 # What files to preserve in case tests fail
 on_failure: &on_failure
   log_artifacts:
-    paths:
-      - "**/*.log"
-      - "**/*.diffs"
-      - "**/regress_log_*"
+    path: "**/**.log"
     type: text/plain
+  regress_diffs_artifacts:
+    path: "**/**.diffs"
+    type: text/plain
+  tap_artifacts:
+    path: "**/regress_log_*"
+    type: text/plain
+
 
 task:
   name: FreeBSD - 13
@@ -155,6 +159,25 @@ task:
 
     LINUX_CONFIGURE_FEATURES: *LINUX_CONFIGURE_FEATURES
 
+    # detect_leaks=0: too many uninteresting leak errors in short-lived binaries
+    # disable_coredump=0, abort_on_error=1: for useful backtraces in case of crashes
+    ASAN_OPTIONS: detect_leaks=0:disable_coredump=0:abort_on_error=1
+
+  # Enable a reasonable set of sanitizers. Use the linux task for that, as
+  # it currently is the fastest task. Also several of the sanitizers work
+  # best on linux.
+  #
+  # XXX: Run a bunch of combinations to gauge overhead
+  matrix:
+    - name: "Linux - Debian Bullseye - Sanitizer: Alignment, Undefined"
+      env:
+        EXTRA_CFLAGS: -Og -fsanitize=alignment,undefined -fno-sanitize=nonnull-attribute -fno-sanitize=float-cast-overflow -fno-sanitize-recover=all
+    - name: "Linux - Debian Bullseye - Sanitizer: Alignment, Undefined, Address"
+      env:
+        EXTRA_CFLAGS: -Og -fsanitize=address,alignment,undefined -fno-sanitize=nonnull-attribute -fno-sanitize=float-cast-overflow -fno-sanitize-recover=all
+        EXTRA_LDFLAGS: -fno-common
+
+
   only_if: $CIRRUS_CHANGE_MESSAGE !=~ '.*\nci-os-only:.*' || $CIRRUS_CHANGE_MESSAGE =~ '.*\nci-os-only:[^\n]*linux.*'
 
   compute_engine_instance:
@@ -196,8 +219,10 @@ task:
         CC="ccache gcc" \
         CXX="ccache g++" \
         CLANG="ccache clang" \
-        CFLAGS="-O0 -ggdb" \
-        CXXFLAGS="-O0 -ggdb"
+        CFLAGS="-ggdb -Og ${EXTRA_CFLAGS}"\
+        CXXFLAGS="-O0 -ggdb" \
+        LDFLAGS="${EXTRA_LDFLAGS}"
+
     EOF
   build_script: su postgres -c "make -s -j${BUILD_JOBS} world-bin"
   upload_caches: ccache
@@ -233,9 +258,8 @@ task:
 
   sysinfo_script: |
     id
-    uname -a
-    ulimit -a -H && ulimit -a -S
     export
+    ulimit -a -H && ulimit -a -S
 
   setup_cores_script:
     - mkdir ${HOME}/cores
@@ -363,14 +387,6 @@ task:
     #   build
     MSBFLAGS: -m -verbosity:minimal "-consoleLoggerParameters:Summary;ForceNoAlign" /p:TrackFileAccess=false -nologo
 
-    # If tests hang forever, cirrus eventually times out. In that case log
-    # output etc is not uploaded, making the problem hard to debug. Of course
-    # tests internally should have shorter timeouts, but that's proven to not
-    # be sufficient. 15min currently is fast enough to finish individual test
-    # "suites".
-    T_C: "\"C:/Program Files/Git/usr/bin/timeout.exe\" -v -k60s 15m"
-
-
   only_if: $CIRRUS_CHANGE_MESSAGE !=~ '.*\nci-os-only:.*' || $CIRRUS_CHANGE_MESSAGE =~ '.*\nci-os-only:[^\n]*windows.*'
 
   windows_container:
@@ -396,57 +412,52 @@ task:
     # Installation on windows currently only completely works from src/tools/msvc
     - cd src/tools/msvc && perl install.pl %CIRRUS_WORKING_DIR%/tmp_install
 
-  test_regress_parallel_script: |
-    %T_C% perl src/tools/msvc/vcregress.pl check parallel
-  startcreate_script: |
-    rem paths to binaries need backslashes
-    tmp_install\bin\pg_ctl.exe initdb -D tmp_check/db -l tmp_check/initdb.log --options=--no-sync
-    echo include '%TEMP_CONFIG%' >> tmp_check/db/postgresql.conf
-    tmp_install\bin\pg_ctl.exe start -D tmp_check/db -l tmp_check/postmaster.log
-
-  test_pl_script: |
-    %T_C% perl src/tools/msvc/vcregress.pl plcheck
-  test_isolation_script: |
-    %T_C% perl src/tools/msvc/vcregress.pl isolationcheck
-  test_modules_script: |
-    %T_C% perl src/tools/msvc/vcregress.pl modulescheck
-  test_contrib_script: |
-    %T_C% perl src/tools/msvc/vcregress.pl contribcheck
-  stop_script: |
-    tmp_install\bin\pg_ctl.exe stop -D tmp_check/db -l tmp_check/postmaster.log
-  test_ssl_script: |
-    set with_ssl=openssl
-    %T_C% perl src/tools/msvc/vcregress.pl taptest ./src/test/ssl/
-  test_subscription_script: |
-    %T_C% perl src/tools/msvc/vcregress.pl taptest ./src/test/subscription/
-  test_authentication_script: |
-    %T_C% perl src/tools/msvc/vcregress.pl taptest ./src/test/authentication/
-  test_recovery_script: |
-    %T_C% perl src/tools/msvc/vcregress.pl recoverycheck
-  test_bin_script: |
-    %T_C% perl src/tools/msvc/vcregress.pl bincheck
-  test_pg_upgrade_script: |
-    %T_C% perl src/tools/msvc/vcregress.pl upgradecheck
-  test_ecpg_script: |
-    rem tries to build additional stuff
-    vcvarsall x64
-    rem References ecpg_regression.proj in the current dir
-    cd src/tools/msvc
-    %T_C% perl vcregress.pl ecpgcheck
+  test_regress_parallel_script:
+    - perl src/tools/msvc/vcregress.pl check parallel
+  startcreate_script:
+    # paths to binaries need backslashes
+    - tmp_install\bin\pg_ctl.exe initdb -D tmp_check/db -l tmp_check/initdb.log --options=--no-sync
+    - echo include '%TEMP_CONFIG%' >> tmp_check/db/postgresql.conf
+    - tmp_install\bin\pg_ctl.exe start -D tmp_check/db -l tmp_check/postmaster.log
+  test_pl_script:
+    - perl src/tools/msvc/vcregress.pl plcheck
+  test_isolation_script:
+    - perl src/tools/msvc/vcregress.pl isolationcheck
+  test_modules_script:
+    - perl src/tools/msvc/vcregress.pl modulescheck
+  test_contrib_script:
+    - perl src/tools/msvc/vcregress.pl contribcheck
+  stop_script:
+    - tmp_install\bin\pg_ctl.exe stop -D tmp_check/db -l tmp_check/postmaster.log
+  test_ssl_script:
+    - set with_ssl=openssl
+    - perl src/tools/msvc/vcregress.pl taptest ./src/test/ssl/
+  test_subscription_script:
+    - perl src/tools/msvc/vcregress.pl taptest ./src/test/subscription/
+  test_authentication_script:
+    - perl src/tools/msvc/vcregress.pl taptest ./src/test/authentication/
+  test_recovery_script:
+    - perl src/tools/msvc/vcregress.pl recoverycheck
+  test_bin_script:
+    - perl src/tools/msvc/vcregress.pl bincheck
+  test_pg_upgrade_script:
+    - perl src/tools/msvc/vcregress.pl upgradecheck
+  test_ecpg_script:
+    # tries to build additional stuff
+    - vcvarsall x64
+    # References ecpg_regression.proj in the current dir
+    - cd src/tools/msvc
+    - perl vcregress.pl ecpgcheck
 
   on_failure:
     <<: *on_failure
     crashlog_artifacts:
-      path: "crashlog-*.txt"
+      path: "crashlog-**.txt"
       type: text/plain
 
 
 task:
   name: CompilerWarnings
-
-  # To limit unnecessary work only run this once the normal linux test succeeds
-  depends_on:
-    - Linux - Debian Bullseye
 
   env:
     CPUS: 4
@@ -454,7 +465,7 @@ task:
 
     # Use larger ccache cache, as this task compiles with multiple compilers /
     # flag combinations
-    CCACHE_MAXSIZE: "1GB"
+    CCACHE_SIZE: "1GB"
     CCACHE_DIR: "/tmp/ccache_dir"
 
     LINUX_CONFIGURE_FEATURES: *LINUX_CONFIGURE_FEATURES
