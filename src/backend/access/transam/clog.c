@@ -297,6 +297,7 @@ TransactionIdSetPageStatus(TransactionId xid, int nsubxids,
 	if (all_xact_same_page && xid == MyProc->xid &&
 		nsubxids <= THRESHOLD_SUBTRANS_CLOG_OPT &&
 		nsubxids == MyProc->subxidStatus.count &&
+		subxids &&
 		memcmp(subxids, MyProc->subxids.xids,
 			   nsubxids * sizeof(TransactionId)) == 0)
 	{
