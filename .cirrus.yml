@@ -486,15 +486,15 @@ task:
         CXX='ccache g++'"
 
   build_script:
-    C:\msys64\usr\bin\bash.exe -lc "cd %BUILD_DIR% && make -s world-bin -j${CPUS}"
+    C:\msys64\usr\bin\bash.exe -lc "cd %BUILD_DIR% && make world-bin -j${CPUS}"
 
   temp_install_script:
-    C:\msys64\usr\bin\bash.exe -lc "cd %BUILD_DIR% && make -s -j${CPUS} temp-install"
+    C:\msys64\usr\bin\bash.exe -lc "cd %BUILD_DIR% && make -j${CPUS} temp-install"
 
   upload_caches: ccache
 
   tests_script:
-    C:\msys64\usr\bin\bash.exe -lc "cd %BUILD_DIR% && make -s ${CHECK} ${CHECKFLAGS} -j${CPUS} NO_TEMP_INSTALL=1 TMPDIR=%BUILD_DIR%/tmp_install"
+    C:\msys64\usr\bin\bash.exe -lc "cd %BUILD_DIR% && make ${CHECK} ${CHECKFLAGS} -j${CPUS} NO_TEMP_INSTALL=1 TMPDIR=%BUILD_DIR%/tmp_install"
 
   on_failure: *on_failure
 
