@@ -487,7 +487,7 @@ task:
 
   tests_script:
   - set "NoDefaultCurrentDirectoryInExePath=0"
-  - C:\msys64\usr\bin\bash.exe -lc "cd %CIRRUS_WORKING_DIR% && make -s ${CHECK} ${CHECKFLAGS} -j${CPUS} TMPDIR=%CIRRUS_WORKING_DIR%/tmp_install"
+  - C:\msys64\usr\bin\bash.exe -lc "cd %CIRRUS_WORKING_DIR% && make -s ${CHECK} ${CHECKFLAGS} -j${CPUS}"
 
   on_failure: *on_failure
 
