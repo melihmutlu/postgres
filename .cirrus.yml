@@ -471,8 +471,8 @@ task:
     CCACHE_DIR: C:/msys64/ccache
     BUILD_DIR: "%CIRRUS_WORKING_DIR%/build"
 
-  ccache_cache:
-    folder: ${CCACHE_DIR}
+  #ccache_cache:
+  #  folder: ${CCACHE_DIR}
 
   mingw_info_script:
     - C:\msys64\usr\bin\dash.exe -lc "where gcc"
@@ -491,14 +491,14 @@ task:
         --with-libxml
         --with-libxslt
         --with-lz4
-        --enable-debug
-        CC='ccache gcc'
-        CXX='ccache g++'"
+        --enable-debug"
+       # CC='ccache gcc'
+       # CXX='ccache g++'"
 
   build_script:
     C:\msys64\usr\bin\dash.exe -lc "cd %BUILD_DIR% && make -s world-bin -j${CPUS}"
 
-  upload_caches: ccache
+  #upload_caches: ccache
 
   tests_script:
   - set "NoDefaultCurrentDirectoryInExePath=0"
