@@ -475,13 +475,13 @@ task:
     folder: ${CCACHE_DIR}
 
   mingw_info_script:
-    - C:\msys64\usr\bin\bash.exe -lc "where gcc"
-    - C:\msys64\usr\bin\bash.exe -lc "gcc --version"
-    - C:\msys64\usr\bin\bash.exe -lc "where perl"
-    - C:\msys64\usr\bin\bash.exe -lc "perl --version"
+    - C:\msys64\usr\bin\dash.exe -lc "where gcc"
+    - C:\msys64\usr\bin\dash.exe -lc "gcc --version"
+    - C:\msys64\usr\bin\dash.exe -lc "where perl"
+    - C:\msys64\usr\bin\dash.exe -lc "perl --version"
 
   configure_script:
-    - C:\msys64\usr\bin\bash.exe -lc "mkdir %BUILD_DIR% &&
+    - C:\msys64\usr\bin\dash.exe -lc "mkdir %BUILD_DIR% &&
       cd %BUILD_DIR% &&
       %CIRRUS_WORKING_DIR%/configure
         --host=x86_64-w64-mingw32
@@ -496,13 +496,13 @@ task:
         CXX='ccache g++'"
 
   build_script:
-    C:\msys64\usr\bin\bash.exe -lc "cd %BUILD_DIR% && make -s world-bin -j${CPUS}"
+    C:\msys64\usr\bin\dash.exe -lc "cd %BUILD_DIR% && make -s world-bin -j${CPUS}"
 
   upload_caches: ccache
 
   tests_script:
   - set "NoDefaultCurrentDirectoryInExePath=0"
-  - C:\msys64\usr\bin\bash.exe -lc "cd %BUILD_DIR% && make -s ${CHECK} ${CHECKFLAGS} -j${CPUS} TMPDIR=%BUILD_DIR%/tmp_install"
+  - C:\msys64\usr\bin\dash.exe -lc "cd %BUILD_DIR% && make -s ${CHECK} ${CHECKFLAGS} -j${CPUS} TMPDIR=%BUILD_DIR%/tmp_install"
 
   on_failure: *on_failure
 
