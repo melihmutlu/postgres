@@ -483,7 +483,7 @@ task:
   configure_script:
     - C:\msys64\usr\bin\bash.exe -lc "mkdir %BUILD_DIR% &&
       cd %BUILD_DIR% &&
-      dash %CIRRUS_WORKING_DIR%/configure
+      dash -c %CIRRUS_WORKING_DIR%/configure
         --host=x86_64-w64-mingw32
         --enable-cassert
         --enable-tap-tests
