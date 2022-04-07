@@ -483,7 +483,7 @@ task:
   configure_script:
     - C:\msys64\usr\bin\dash.exe -lc "mkdir %BUILD_DIR% &&
       cd %BUILD_DIR% &&
-      %CIRRUS_WORKING_DIR%/configure
+      dash -c \"%CIRRUS_WORKING_DIR%/configure
         --host=x86_64-w64-mingw32
         --enable-cassert
         --enable-tap-tests
@@ -493,7 +493,7 @@ task:
         --with-lz4
         --enable-debug
         CC='ccache gcc'
-        CXX='ccache g++'"
+        CXX='ccache g++'\""
 
   build_script:
     C:\msys64\usr\bin\dash.exe -lc "cd %BUILD_DIR% && make -s world-bin -j${CPUS}"
