@@ -8,6 +8,7 @@ $config->{"asserts"} = 1;
 
 $config->{"icu"} = "c:/icu/";
 $config->{"lz4"} = "c:/lz4";
+$config->{"zlib"} = "c:/zlib";
 $config->{"zstd"} = "c:/zstd/zstd-v1.5.2-win64";
 
 $config->{"openssl"} = "c:/openssl/1.1/";
