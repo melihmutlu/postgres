@@ -937,7 +937,7 @@ endif
 
 zstdopt = get_option('zstd')
 if not zstdopt.disabled()
-  zstd = dependency('libzstd', required: zstdopt)
+  zstd = dependency('libzstd', required: zstdopt, version: '>=1.4.0')
 
   if zstd.found()
     cdata.set('USE_ZSTD', 1)
