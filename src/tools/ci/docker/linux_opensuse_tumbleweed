@@ -22,9 +22,9 @@ RUN \
   gcc \
   gcc-c++ \
   gettext-runtime \
-  lz4 \
   ninja \
   \
+  krb5-devel \
   libicu-devel \
   libldapcpp-devel \
   liblz4-devel \
@@ -33,6 +33,7 @@ RUN \
   libuuid-devel \
   libxml2-devel \
   libxslt-devel \
+  libzstd-devel \
   llvm-devel \
   pam-devel \
   python38-devel \
@@ -43,11 +44,12 @@ RUN \
   openldap2-client \
   \
   krb5-client \
-  krb5-devel \
   krb5-plugin-kdb-ldap \
   krb5-server && \
+  lz4 \
+  zstd \
   \
   zypper -n clean -a
 
-# Fixing ICU errors caused by locale being set to 'POSIX' 
+# Fixing ICU errors caused by locale being set to 'POSIX'
 ENV LANG=en_US.UTF-8 LANGUAGE=en_US:en LC_ALL=en_US.UTF-8

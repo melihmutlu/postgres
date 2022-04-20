@@ -13,7 +13,6 @@ RUN \
   flex \
   gcc \
   gettext \
-  lz4 \
   ninja-build \
   \
   krb5-devel \
@@ -21,6 +20,7 @@ RUN \
   libuuid-devel \
   libxml2-devel \
   libxslt-devel \
+  libzstd-devel \
   llvm-devel \
   lz4-devel \
   openldap-devel \
@@ -34,10 +34,12 @@ RUN \
   krb5-server \
   krb5-server-ldap \
   krb5-workstation \
-  openldap-servers \
+  lz4 \
   openldap-clients \
+  openldap-servers \
   openssl \
   \
   langpacks-en \
   glibc-langpack-en
+
 ENV LANG=en_US.UTF-8

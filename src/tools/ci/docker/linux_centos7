@@ -7,6 +7,7 @@ RUN \
 RUN \
   yum -y update && \
   yum -y install \
+  \
   git \
   perl \
   perl-ExtUtils-Embed \
@@ -21,13 +22,13 @@ RUN \
   flex \
   gcc \
   gettext \
-  lz4 \
   \
   krb5-devel \
   libicu-devel \
   libuuid-devel \
   libxml2-devel \
   libxslt-devel \
+  libzstd-devel \
   lz4-devel \
   openldap-devel \
   openssl-devel \
@@ -40,11 +41,15 @@ RUN \
   krb5-server \
   krb5-server-ldap \
   krb5-workstation \
+  lz4 \
   openldap-clients \
   openldap-servers \
   openssl && \
+  zstd \
+  \
   pip3 install meson && \
   pip3 install ninja
+
 # Make version is 3.82 but required is > 4, adding devtoolset-7-make to the PATH
 ENV PATH="/opt/rh/devtoolset-7/root/usr/bin/:${PATH}"
 ENV LANG=en_US.UTF-8

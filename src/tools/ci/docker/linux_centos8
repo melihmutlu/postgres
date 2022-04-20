@@ -7,6 +7,7 @@ RUN \
 RUN \
   dnf -y update && \
   dnf -y install \
+  \
   git \
   meson \
   perl \
@@ -19,13 +20,13 @@ RUN \
   flex \
   gcc \
   gettext \
-  lz4 \
   \
   krb5-devel \
   libicu-devel \
   libuuid-devel \
   libxml2-devel \
   libxslt-devel \
+  libzstd-devel \
   llvm-devel \
   lz4-devel \
   openldap-devel \
@@ -39,10 +40,13 @@ RUN \
   krb5-server \
   krb5-server-ldap \
   krb5-workstation \
+  lz4 \
   openldap-clients \
   openldap-servers \
   openssl \
+  zstd \
   \
   glibc-langpack-en && \
   pip3 install ninja
+
 ENV LANG=en_US.UTF-8
