@@ -2160,7 +2160,7 @@ foreach test: tests
     test_kwargs = {
       'suite': ['pg_regress', t['name']],
       'priority': 10,
-      'timeout': 300,
+      'timeout': 1000,
       'depends': test_deps + t.get('deps', []),
       'env': env,
       'args': [
@@ -2216,7 +2216,7 @@ foreach test: tests
     test_kwargs = {
       'suite': ['isolation', t['name']],
       'priority': 20,
-      'timeout': 300,
+      'timeout': 1000,
       'depends': test_deps + t.get('deps', []),
       'env': env,
       'args': [
@@ -2265,7 +2265,7 @@ foreach test: tests
     test_kwargs = {
       'protocol': 'tap',
       'suite': ['tap', t['name']],
-      'timeout': 300,
+      'timeout': 1000,
       'depends': test_deps + t.get('deps', []),
       'env': env,
     }
