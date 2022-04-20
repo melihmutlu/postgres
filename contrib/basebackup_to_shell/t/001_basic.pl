@@ -15,6 +15,7 @@ if (!defined $gzip || $gzip eq '')
 {
 	plan skip_all => 'gzip not available';
 }
+$gzip =~ s{\\}{/}g if ($PostgreSQL::Test::Utils::windows_os);
 
 my $node = PostgreSQL::Test::Cluster->new('primary');
 
@@ -113,6 +114,8 @@ sub verify_backup
 	SKIP: {
 		my $tar = $ENV{TAR};
 		skip "no tar program available", 1 if (!defined $tar || $tar eq '');
+
+		$tar =~ s{\\}{/}g if ($PostgreSQL::Test::Utils::windows_os);
 
 		# Decompress.
 		system_or_bail($gzip, '-d',
