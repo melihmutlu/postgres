@@ -44,9 +44,10 @@ RUN \
   lz4 \
   openldap-clients \
   openldap-servers \
-  openssl && \
+  openssl \
   zstd \
   \
+  && \
   pip3 install meson && \
   pip3 install ninja
 

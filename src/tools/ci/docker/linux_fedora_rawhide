@@ -38,6 +38,7 @@ RUN \
   openldap-clients \
   openldap-servers \
   openssl \
+  zstd \
   \
   langpacks-en \
   glibc-langpack-en

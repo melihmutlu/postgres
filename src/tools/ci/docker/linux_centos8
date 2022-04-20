@@ -46,7 +46,9 @@ RUN \
   openssl \
   zstd \
   \
-  glibc-langpack-en && \
+  glibc-langpack-en \
+  \
+  && \
   pip3 install ninja
 
 ENV LANG=en_US.UTF-8
