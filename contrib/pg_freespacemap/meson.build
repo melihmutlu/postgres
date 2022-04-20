@@ -22,5 +22,8 @@ tests += {
     'sql': [
       'pg_freespacemap',
     ],
+    'regress_args': [
+      '--temp-config', files('pg_freespacemap.conf')
+    ],
   },
 }

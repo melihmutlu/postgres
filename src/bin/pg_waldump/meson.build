@@ -6,6 +6,7 @@ pg_waldump_sources = files(
 
 pg_waldump_sources += rmgr_desc_sources
 pg_waldump_sources += xlogreader_sources
+pg_waldump_sources += files('../../backend/access/transam/xlogstats.c')
 
 pg_waldump = executable('pg_waldump',
   pg_waldump_sources,

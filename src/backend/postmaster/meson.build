@@ -7,7 +7,6 @@ backend_sources += files(
   'fork_process.c',
   'interrupt.c',
   'pgarch.c',
-  'pgstat.c',
   'postmaster.c',
   'shell_archive.c',
   'startup.c',

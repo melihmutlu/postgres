@@ -32,7 +32,6 @@ tests += {
       'stats',
       'twophase',
       'twophase_stream',
-      'sequence',
     ],
     'regress_args': [
       '--temp-config', files('logical.conf'),

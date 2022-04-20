@@ -31,6 +31,7 @@ tests += {
       't/006_options.pl',
       't/007_standby_source.pl',
       't/008_min_recovery_point.pl',
+      't/009_growing_files.pl',
     ],
   },
 }

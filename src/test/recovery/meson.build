@@ -33,7 +33,9 @@ tests += {
       't/026_overwrite_contrecord.pl',
       't/027_stream_regress.pl',
       't/028_pitr_timelines.pl',
-      't/029_replay_tsp_drops.pl',
+      't/029_stats_restart.pl',
+      't/030_stats_cleanup_replica.pl',
+      't/031_recovery_conflict.pl',
     ],
   },
 }

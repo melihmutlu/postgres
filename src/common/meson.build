@@ -1,8 +1,8 @@
 common_sources = files(
   'archive.c',
   'base64.c',
-  'backup_compression.c',
   'checksum_helper.c',
+  'compression.c',
   'config_info.c',
   'controldata_utils.c',
   'encnames.c',

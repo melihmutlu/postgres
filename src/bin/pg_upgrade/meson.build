@@ -23,4 +23,15 @@ pg_upgrade = executable('pg_upgrade',
   kwargs: default_bin_args,
 )
 
-# FIXME: add test
+
+tests += {
+  'name': 'pg_upgrade',
+  'sd': meson.current_source_dir(),
+  'bd': meson.current_build_dir(),
+  'tap': {
+    'tests': [
+      't/001_basic.pl',
+      't/002_pg_upgrade.pl',
+    ]
+  },
+}
