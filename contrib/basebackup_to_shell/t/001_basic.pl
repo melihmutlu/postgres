@@ -52,8 +52,8 @@ my $escaped_backup_path = $backup_path;
 $escaped_backup_path =~ s{\\}{\\\\}g if ($PostgreSQL::Test::Utils::windows_os);
 my $shell_command =
 	$PostgreSQL::Test::Utils::windows_os
-	? qq{$gzip --fast > "$escaped_backup_path\\\\%f.gz"}
-    : qq{$gzip --fast > "$escaped_backup_path/%f.gz"};
+	? qq{"$gzip" --fast > "$escaped_backup_path\\\\%f.gz"}
+    : qq{"$gzip" --fast > "$escaped_backup_path/%f.gz"};
 $node->append_conf('postgresql.conf',
 				   "basebackup_to_shell.command='$shell_command'");
 $node->reload();
@@ -73,8 +73,8 @@ $node->command_fails_like(
 # Reconfigure to restrict access and require a detail.
 $shell_command =
 	$PostgreSQL::Test::Utils::windows_os
-	? qq{$gzip --fast > "$escaped_backup_path\\\\%d.%f.gz"}
-    : qq{$gzip --fast > "$escaped_backup_path/%d.%f.gz"};
+	? qq{"$gzip" --fast > "$escaped_backup_path\\\\%d.%f.gz"}
+    : qq{"$gzip" --fast > "$escaped_backup_path/%d.%f.gz"};
 $node->append_conf('postgresql.conf',
 				   "basebackup_to_shell.command='$shell_command'");
 $node->append_conf('postgresql.conf',
