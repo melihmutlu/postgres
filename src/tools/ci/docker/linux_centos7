@@ -3,8 +3,8 @@ FROM centos:centos7
 RUN \
   yum -y install dnf-plugins-core \
   epel-release \
-  centos-release-scl-rh
-RUN \
+  centos-release-scl-rh && \
+  \
   yum -y update && \
   yum -y install \
   \
@@ -49,7 +49,8 @@ RUN \
   \
   && \
   pip3 install meson && \
-  pip3 install ninja
+  pip3 install ninja && \
+  yum clean all
 
 # Make version is 3.82 but required is > 4, adding devtoolset-7-make to the PATH
 ENV PATH="/opt/rh/devtoolset-7/root/usr/bin/:${PATH}"

@@ -3,8 +3,7 @@ FROM quay.io/centos/centos:stream8
 RUN \
   dnf -y install dnf-plugins-core && \
   dnf config-manager --set-enabled powertools && \
-  dnf -y install epel-release
-RUN \
+  dnf -y install epel-release && \
   dnf -y update && \
   dnf -y install \
   \
@@ -49,6 +48,7 @@ RUN \
   glibc-langpack-en \
   \
   && \
-  pip3 install ninja
+  pip3 install ninja && \
+  yum clean all
 
 ENV LANG=en_US.UTF-8

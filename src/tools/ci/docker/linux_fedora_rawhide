@@ -41,6 +41,9 @@ RUN \
   zstd \
   \
   langpacks-en \
-  glibc-langpack-en
+  glibc-langpack-en \
+  \
+  && \
+  yum clean all
 
 ENV LANG=en_US.UTF-8
