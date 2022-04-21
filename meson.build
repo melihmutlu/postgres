@@ -2,6 +2,10 @@ project('postgresql',
   ['c'],
   version: '15devel',
   license: 'PostgreSQL',
+
+  # We want < 0.56 for python 3.5 compatibility on old platforms. EPEL for
+  # RHEL 7 has 0.55. < 0.54 would require replacing some uses of the fs
+  # module, < 0.53 all uses of fs. So far there's no need to go to >=0.56.
   meson_version: '>=0.54',
   default_options: [
     'warning_level=2',
