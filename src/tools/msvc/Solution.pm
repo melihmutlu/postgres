@@ -953,7 +953,7 @@ sub AddProject
 	if ($self->{options}->{zlib})
 	{
 		$proj->AddIncludeDir($self->{options}->{zlib} . '\include');
-		$proj->AddLibrary($self->{options}->{zlib} . '\lib\zdll.lib');
+		$proj->AddLibrary($self->{options}->{zlib} . '\lib\zlib.lib');
 	}
 	if ($self->{options}->{openssl})
 	{
@@ -1088,12 +1088,12 @@ sub AddProject
 	if ($self->{options}->{lz4})
 	{
 		$proj->AddIncludeDir($self->{options}->{lz4} . '\include');
-		$proj->AddLibrary($self->{options}->{lz4} . '\lib\liblz4.lib');
+		$proj->AddLibrary($self->{options}->{lz4} . '\dll\liblz4.dll.a');
 	}
 	if ($self->{options}->{zstd})
 	{
 		$proj->AddIncludeDir($self->{options}->{zstd} . '\include');
-		$proj->AddLibrary($self->{options}->{zstd} . '\lib\libzstd.lib');
+		$proj->AddLibrary($self->{options}->{zstd} . '\dll\libzstd.dll.a');
 	}
 	if ($self->{options}->{uuid})
 	{
