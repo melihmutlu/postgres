@@ -447,8 +447,16 @@ ReplicationOriginNameForLogicalRep(Oid suboid, Oid relid,
 {
 	if (OidIsValid(relid))
 	{
-		/* Replication origin name for tablesync workers. */
-		snprintf(originname, szoriginname, "pg_%u_%u", suboid, relid);
+		bool		is_null = true;
+
+		/*
+		 * Replication origin name for tablesync workers. First, look into the
+		 * catalog. If originname does not exist, then use the default name.
+		 */
+		GetSubscriptionRelOrigin(suboid, relid,
+								 originname, &is_null);
+		if (is_null)
+			snprintf(originname, szoriginname, "pg_%u_%lld", suboid, (long long) MyLogicalRepWorker->rep_slot_id);
 	}
 	else
 	{
@@ -4501,11 +4509,10 @@ run_apply_worker(WalRcvStreamOptions *options,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 					errmsg("subscription has no replication slot set")));
 
-	ReplicationOriginNameForLogicalRep(MySubscription->oid, InvalidOid,
-									   originname, originname_size);
-
 	/* Setup replication origin tracking. */
 	StartTransactionCommand();
+	ReplicationOriginNameForLogicalRep(MySubscription->oid, InvalidOid,
+									   originname, originname_size);
 	originid = replorigin_by_name(originname, true);
 	if (!OidIsValid(originid))
 		originid = replorigin_create(originname);
