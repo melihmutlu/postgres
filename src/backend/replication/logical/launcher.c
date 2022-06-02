@@ -304,7 +304,7 @@ logicalrep_workers_find(Oid subid, bool only_running)
  */
 bool
 logicalrep_worker_launch(Oid dbid, Oid subid, const char *subname, Oid userid,
-						 Oid relid, dsm_handle subworker_dsm)
+						 Oid relid, dsm_handle subworker_dsm, int64 slotid)
 {
 	BackgroundWorker bgw;
 	BackgroundWorkerHandle *bgw_handle;
@@ -430,6 +430,9 @@ retry:
 	worker->launch_time = now;
 	worker->in_use = true;
 	worker->generation++;
+	worker->created_slot = false;
+	worker->rep_slot_id = slotid;
+	worker->slot_name = (char *) palloc(NAMEDATALEN);
 	worker->proc = NULL;
 	worker->dbid = dbid;
 	worker->userid = userid;
@@ -1180,7 +1183,8 @@ ApplyLauncherMain(Datum main_arg)
 				ApplyLauncherSetWorkerStartTime(sub->oid, now);
 				logicalrep_worker_launch(sub->dbid, sub->oid, sub->name,
 										 sub->owner, InvalidOid,
-										 DSM_HANDLE_INVALID);
+										 DSM_HANDLE_INVALID,
+										 InvalidRepSlotId);
 			}
 			else
 			{

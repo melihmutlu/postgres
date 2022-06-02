@@ -464,8 +464,16 @@ ReplicationOriginNameForLogicalRep(Oid suboid, Oid relid,
 {
 	if (OidIsValid(relid))
 	{
-		/* Replication origin name for tablesync workers. */
-		snprintf(originname, szoriginname, "pg_%u_%u", suboid, relid);
+		bool		is_null = true;
+
+		/*
+		 * Replication origin name for tablesync workers. First, look into the
+		 * catalog. If originname does not exist, then use the default name.
+		 */
+		GetSubscriptionRelOrigin(suboid, relid,
+								 originname, &is_null);
+		if (is_null)
+			snprintf(originname, szoriginname, "pg_%u_%lld", suboid, (long long) MyLogicalRepWorker->rep_slot_id);
 	}
 	else
 	{
@@ -3768,7 +3776,8 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 	error_context_stack = errcallback.previous;
 	apply_error_context_stack = error_context_stack;
 
-	/* Tablesync workers should end streaming before exiting the main loop
+	/*
+	 * Tablesync workers should end streaming before exiting the main loop
 	 * to drop replication slot. Only end streaming here for apply workers.
 	 */
 	if (!am_tablesync_worker())
@@ -4494,6 +4503,9 @@ start_table_sync(XLogRecPtr *origin_startpos, char **myslotname)
 
 	/* allocate slot name in long-lived context */
 	*myslotname = MemoryContextStrdup(ApplyContext, syncslotname);
+
+	/* Keep the replication slot name used for this sync. */
+	MyLogicalRepWorker->slot_name = *myslotname;
 	pfree(syncslotname);
 }
 
@@ -4548,10 +4560,12 @@ run_tablesync_worker(WalRcvStreamOptions *options,
 	/* Start table synchronization. */
 	start_table_sync(origin_startpos, &slotname);
 
+	StartTransactionCommand();
 	ReplicationOriginNameForLogicalRep(MySubscription->oid,
 									   MyLogicalRepWorker->relid,
 									   originname,
 									   originname_size);
+	CommitTransactionCommand();
 
 	set_apply_error_context_origin(originname);
 
@@ -4592,11 +4606,10 @@ run_apply_worker(WalRcvStreamOptions *options,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 					errmsg("subscription has no replication slot set")));
 
-	ReplicationOriginNameForLogicalRep(MySubscription->oid, InvalidOid,
-									   originname, originname_size);
-
 	/* Setup replication origin tracking. */
 	StartTransactionCommand();
+	ReplicationOriginNameForLogicalRep(MySubscription->oid, InvalidOid,
+									   originname, originname_size);
 	originid = replorigin_by_name(originname, true);
 	if (!OidIsValid(originid))
 		originid = replorigin_create(originname);
@@ -4725,7 +4738,7 @@ InitializeLogRepWorker(void)
 
 	if (am_tablesync_worker())
 		ereport(LOG,
-				(errmsg("%s for subscription \"%s\", table \"%s\" has started",
+				(errmsg("%s for subscription \"%s\", table \"%s\" with relid %u has started",
 						get_worker_name(),
 						MySubscription->name,
 						get_rel_name(MyLogicalRepWorker->relid),
@@ -4873,12 +4886,12 @@ TablesyncWorkerMain(Datum main_arg)
 				memcpy(rstate, lfirst(lc), sizeof(SubscriptionRelState));
 
 				/*
-				* Pick the table for the next run if it is not already picked up
-				* by another worker.
-				*
-				* Take exclusive lock to prevent any other sync worker from picking
-				* the same table.
-				*/
+				 * Pick the table for the next run if it is not already picked up
+				 * by another worker.
+				 *
+				 * Take exclusive lock to prevent any other sync worker from picking
+				 * the same table.
+				 */
 				LWLockAcquire(LogicalRepWorkerLock, LW_EXCLUSIVE);
 				if (rstate->state != SUBREL_STATE_SYNCDONE &&
 					!logicalrep_worker_find(MySubscription->oid, rstate->relid, false))
@@ -4908,7 +4921,32 @@ TablesyncWorkerMain(Datum main_arg)
 			}
 
 			if (!is_table_found)
+			{
+				TimeLineID	tli;
+
+				/*
+				 * It is important to give an error if we are unable to drop the
+				 * slot, otherwise, it won't be dropped till the corresponding
+				 * subscription is dropped. So passing missing_ok = false.
+				 */
+				if (MyLogicalRepWorker->created_slot)
+				{
+					walrcv_endstreaming(LogRepWorkerWalRcvConn, &tli);
+					ReplicationSlotDropAtPubNode(LogRepWorkerWalRcvConn, MyLogicalRepWorker->slot_name, false);
+				}
+
+				/*
+				 * Drop replication origin before exiting.
+				 *
+				 * There is a chance that the user is concurrently performing refresh
+				 * for the subscription where we remove the table state and its origin
+				 * or the apply worker would have removed this origin. So passing
+				 * missing_ok = true.
+				 */
+				replorigin_drop_by_name(originname, true, false);
+
 				break;
+			}
 		}
 	}
 
