@@ -177,6 +177,11 @@ ALTER SUBSCRIPTION <replaceable class="parameter">name</replaceable> RENAME TO <
           how <literal>copy_data = true</literal> can interact with the
           <literal>origin</literal> parameter.
          </para>
+         <para>
+          See the <literal>binary</literal> option of
+          <link linkend="sql-createsubscription-binary"><command>CREATE SUBSCRIPTION</command></link>
+          for details about copying pre-existing data in binary format.
+         </para>
         </listitem>
        </varlistentry>
       </variablelist></para>
