@@ -43,6 +43,17 @@ typedef struct
 	int32		pinning_backends;
 } BufferCachePagesRec;
 
+/*
+ * Record structure for buffer cache summary
+ */
+typedef struct
+{
+	int16		used_buffers;
+	int16 		unused_buffers;
+	int16 		dirty_buffers;
+	int32		pinned_buffers;
+} BufferCacheSummaryRec;
+
 
 /*
  * Function context for data persisting over repeated calls.
@@ -54,11 +65,18 @@ typedef struct
 } BufferCachePagesContext;
 
 
+typedef struct
+{
+	TupleDesc	tupdesc;
+	BufferCacheSummaryRec *record;
+} BufferCacheSummaryContext;
+
 /*
  * Function returning data from the shared buffer cache - buffer number,
  * relation node/tablespace/database/blocknum and dirty indicator.
  */
 PG_FUNCTION_INFO_V1(pg_buffercache_pages);
+PG_FUNCTION_INFO_V1(pg_buffercache_summary);
 
 Datum
 pg_buffercache_pages(PG_FUNCTION_ARGS)
@@ -236,4 +254,109 @@ pg_buffercache_pages(PG_FUNCTION_ARGS)
 	}
 	else
 		SRF_RETURN_DONE(funcctx);
+}
+
+Datum
+pg_buffercache_summary(PG_FUNCTION_ARGS)
+{
+	FuncCallContext *funcctx;
+	Datum		result;
+	MemoryContext oldcontext;
+	BufferCacheSummaryContext *fctx;	/* User function context. */
+	TupleDesc	tupledesc;
+	HeapTuple	tuple;
+	Datum		values[4];
+	bool		nulls[4];
+
+	int			i;
+
+	if (SRF_IS_FIRSTCALL())
+	{
+		funcctx = SRF_FIRSTCALL_INIT();	
+	}
+
+	funcctx = SRF_PERCALL_SETUP();
+
+	if (funcctx->call_cntr > 0)
+	{
+		SRF_RETURN_DONE(funcctx);
+	}
+
+	/* Switch context when allocating stuff to be used in later calls */
+	oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+
+	/* Create a user function context for cross-call persistence */
+	fctx = (BufferCacheSummaryContext *) palloc(sizeof(BufferCacheSummaryContext));
+
+	/* Construct a tuple descriptor for the result rows. */
+	tupledesc = CreateTemplateTupleDesc(4);
+	TupleDescInitEntry(tupledesc, (AttrNumber) 1, "used_buffers",
+						INT2OID, -1, 0);
+	TupleDescInitEntry(tupledesc, (AttrNumber) 2, "unused_buffers",
+						INT2OID, -1, 0);
+	TupleDescInitEntry(tupledesc, (AttrNumber) 3, "dirty_buffers",
+						INT2OID, -1, 0);
+	TupleDescInitEntry(tupledesc, (AttrNumber) 4, "pinned_buffers",
+						INT2OID, -1, 0);
+
+	fctx->tupdesc = BlessTupleDesc(tupledesc);
+
+	/* Allocate BufferCacheSummaryRec record. */
+	fctx->record = (BufferCacheSummaryRec *)
+		MemoryContextAllocHuge(CurrentMemoryContext, sizeof(BufferCacheSummaryRec));
+
+	/* Set max calls and remember the user function context. */
+	funcctx->user_fctx = fctx;
+
+	/* Return to original context when allocating transient memory */
+	MemoryContextSwitchTo(oldcontext);
+
+	fctx->record->used_buffers = 0;
+	fctx->record->unused_buffers = 0;
+	fctx->record->dirty_buffers = 0;
+	fctx->record->pinned_buffers = 0;
+
+	for (i = 0; i < NBuffers; i++)
+	{
+		BufferDesc *bufHdr;
+		uint32		buf_state;
+		int16 		pinning_backends;
+
+		bufHdr = GetBufferDescriptor(i);
+		/* Lock each buffer header before inspecting. */
+		buf_state = LockBufHdr(bufHdr);
+
+		if(bufHdr->tag.rlocator.relNumber != InvalidOid)
+			fctx->record->used_buffers++;
+		else
+			fctx->record->unused_buffers++;
+
+		if (buf_state & BM_DIRTY)
+			fctx->record->dirty_buffers++;
+
+		pinning_backends = BUF_STATE_GET_REFCOUNT(buf_state);
+		if (pinning_backends > 0)
+			fctx->record->pinned_buffers++;
+
+		UnlockBufHdr(bufHdr, buf_state);
+	}
+
+
+	/* Get the saved state */
+	fctx = funcctx->user_fctx;
+
+	values[0] = Int16GetDatum(fctx->record->used_buffers);
+	nulls[0] = false;
+	values[1] = Int16GetDatum(fctx->record->unused_buffers);
+	nulls[1] = false;
+	values[2] = Int16GetDatum(fctx->record->dirty_buffers);
+	nulls[2] = false;
+	values[3] = Int16GetDatum(fctx->record->pinned_buffers);
+	nulls[3] = false;
+
+	/* Build and return the tuple. */
+	tuple = heap_form_tuple(fctx->tupdesc, values, nulls);
+	result = HeapTupleGetDatum(tuple);
+
+	SRF_RETURN_NEXT(funcctx, result);
 }
