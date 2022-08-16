@@ -8,3 +8,12 @@ from pg_buffercache;
  t
 (1 row)
 
+select used_buffers + unused_buffers > 0,
+        dirty_buffers < used_buffers,
+        pinned_buffers < used_buffers
+from pg_buffercache_summary();
+ ?column? | ?column? | ?column? 
+----------+----------+----------
+ t        | t        | t
+(1 row)
+
