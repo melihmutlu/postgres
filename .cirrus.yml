@@ -34,6 +34,7 @@ on_failure: &on_failure
       - "**/*.log"
       - "**/*.diffs"
       - "**/regress_log_*"
+      - "**/*.stackdump"
     type: text/plain
 
 task:
@@ -348,8 +349,6 @@ WINDOWS_ENVIRONMENT_BASE: &WINDOWS_ENVIRONMENT_BASE
       # Avoids port conflicts between concurrent tap test runs
       PG_TEST_USE_UNIX_SOCKETS: 1
 
-    only_if: $CIRRUS_CHANGE_MESSAGE !=~ '.*\nci-os-only:.*' || $CIRRUS_CHANGE_MESSAGE =~ '.*\nci-os-only:[^\n]*windows.*'
-
     sysinfo_script: |
       chcp
       systeminfo
@@ -359,6 +358,8 @@ WINDOWS_ENVIRONMENT_BASE: &WINDOWS_ENVIRONMENT_BASE
 task:
   << : *WINDOWS_ENVIRONMENT_BASE
   name: Windows - Server 2019, VS 2019
+
+  only_if: $CIRRUS_CHANGE_MESSAGE !=~ '.*\nci-os-only:.*' || $CIRRUS_CHANGE_MESSAGE =~ '.*\nci-os-only:[^\n]*windows.*'
 
   env:
     # Our windows infrastructure doesn't have test concurrency above the level
@@ -465,6 +466,8 @@ task:
 task:
   << : *WINDOWS_ENVIRONMENT_BASE
   name: Windows - Server 2019, MinGW64
+  #XXX only_if: $CIRRUS_CHANGE_MESSAGE =~ '.*\nci-os-only:[^\n]*mingw.*'
+
   windows_container:
     image: $CONTAINER_REPO/windows_ci_mingw64:latest
     cpu: $CPUS
@@ -476,6 +479,10 @@ task:
   ccache_cache:
     folder: ${CCACHE_DIR}
 
+  setup_additional_packages_script: |
+    REM choco install -y --no-progress ...
+    REM C:\msys64\usr\bin\pacman.exe -S --noconfirm busybox
+
   mingw_info_script:
     - C:\msys64\usr\bin\dash.exe -lc "where gcc"
     - C:\msys64\usr\bin\dash.exe -lc "gcc --version"
@@ -483,20 +490,25 @@ task:
     - C:\msys64\usr\bin\dash.exe -lc "perl --version"
 
   configure_script:
+    # Try to configure with the cache file, and retry without if it fails, in case the flags changed.
     - C:\msys64\usr\bin\dash.exe -lc "mkdir %BUILD_DIR% &&
-      cd %BUILD_DIR% &&
+      cd %BUILD_DIR% && for i in 1 2; do
       %CIRRUS_WORKING_DIR%/configure
+        --cache-file=${CCACHE_DIR}/configure.cache
         --enable-cassert
+        --enable-debug
         --enable-tap-tests
         --with-icu
         --with-libxml
         --with-libxslt
         --with-lz4
-        --enable-debug
         CC='ccache gcc'
         CXX='ccache g++'
         CFLAGS='-Og -ggdb -pipe'
-        CXXFLAGS='-Og -ggdb'"
+        CXXFLAGS='-Og -ggdb' && break;
+        rm -v ${CCACHE_DIR}/configure.cache;
+        done
+        "
 
   build_script:
     C:\msys64\usr\bin\dash.exe -lc "cd %BUILD_DIR% && make -s world-bin -j${CPUS}"
@@ -504,10 +516,13 @@ task:
   upload_caches: ccache
 
   tests_script:
-  - set "NoDefaultCurrentDirectoryInExePath=0"
-  - C:\msys64\usr\bin\dash.exe -lc "cd %BUILD_DIR% && make -s ${CHECK} ${CHECKFLAGS} -j${CPUS} TMPDIR=%BUILD_DIR%/tmp_install"
+    - set "NoDefaultCurrentDirectoryInExePath=0"
+    - C:\msys64\usr\bin\dash.exe -lc "cd %BUILD_DIR% && make -s ${CHECK} ${CHECKFLAGS} -j${CPUS} TMPDIR=%BUILD_DIR%/tmp_install"
 
-  on_failure: *on_failure
+  on_failure:
+    <<: *on_failure
+    cores_script:
+      - C:\tools\cygwin\bin\dash.exe --login -c "cd '%cd%' && src/tools/ci/cores_backtrace.sh msys ."
 
 task:
   name: CompilerWarnings
