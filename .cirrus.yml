@@ -349,6 +349,10 @@ WINDOWS_ENVIRONMENT_BASE: &WINDOWS_ENVIRONMENT_BASE
       # Avoids port conflicts between concurrent tap test runs
       PG_TEST_USE_UNIX_SOCKETS: 1
 
+      # git's tar doesn't deal with drive letters, see
+      # https://postgr.es/m/b6782dc3-a7b0-ed56-175f-f8f54cb08d67%40dunslane.net
+      TAR: "c:/windows/system32/tar.exe"
+
     sysinfo_script: |
       chcp
       systeminfo
@@ -373,9 +377,7 @@ task:
 
     # Avoid re-installing over and over
     NO_TEMP_INSTALL: 1
-    # git's tar doesn't deal with drive letters, see
-    # https://postgr.es/m/b6782dc3-a7b0-ed56-175f-f8f54cb08d67%40dunslane.net
-    TAR: "c:/windows/system32/tar.exe"
+
     PG_REGRESS_SOCK_DIR: "c:/cirrus/"
     # -m enables parallelism
     # verbosity:minimal + Summary reduce verbosity, while keeping a summary of
@@ -522,7 +524,7 @@ task:
   on_failure:
     <<: *on_failure
     cores_script:
-      - C:\tools\cygwin\bin\dash.exe --login -c "cd '%cd%' && src/tools/ci/cores_backtrace.sh msys ."
+      -    --login -c "cd '%cd%' && src/tools/ci/cores_backtrace.sh msys ."
 
 task:
   name: CompilerWarnings
