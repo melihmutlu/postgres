@@ -16,6 +16,12 @@ ecpglib_inc = ['.', ecpg_inc, postgres_inc]
 ecpglib_c_args = ['-DSO_MAJOR_VERSION=6']
 export_file = custom_target('libecpg.exports', kwargs: gen_export_kwargs)
 
+if host_system == 'windows'
+  ecpglib_so_sources += rc_lib_gen.process(win32ver_rc, extra_args: [
+    '--NAME', 'libecpg',
+    '--FILEDESC', 'ECPG - embedded SQL in C',])
+endif
+
 # not using both_libraries(), as the resource file should only be in the
 # shared library
 ecpglib_st = static_library('libecpg',

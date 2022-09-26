@@ -12,6 +12,12 @@ export_file = custom_target('libpgtypes.exports', kwargs: gen_export_kwargs)
 ecpg_pgtypes_inc = ['.', ecpg_inc, postgres_inc]
 ecpg_pgtypes_c_args = ['-DSO_MAJOR_VERSION=3']
 
+if host_system == 'windows'
+  ecpg_pgtypes_so_sources += rc_lib_gen.process(win32ver_rc, extra_args: [
+    '--NAME', 'pgtypes',
+    '--FILEDESC', 'pgtypes - library for data type mapping',])
+endif
+
 # not using both_libraries(), as the resource file should only be in the
 # shared library
 ecpg_pgtypes_st = static_library('libpgtypes',
