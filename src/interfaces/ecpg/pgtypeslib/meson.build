@@ -6,13 +6,29 @@ ecpg_pgtypes_sources = files(
   'numeric.c',
   'timestamp.c',
 )
+ecpg_pgtypes_so_sources = []
 
-export_file = custom_target('libpq.exports', kwargs: gen_export_kwargs)
+export_file = custom_target('libpgtypes.exports', kwargs: gen_export_kwargs)
+ecpg_pgtypes_inc = ['.', ecpg_inc, postgres_inc]
+ecpg_pgtypes_c_args = ['-DSO_MAJOR_VERSION=3']
 
-ecpg_pgtypes = both_libraries('libpgtypes',
+# not using both_libraries(), as the resource file should only be in the
+# shared library
+ecpg_pgtypes_st = static_library('libpgtypes',
   ecpg_pgtypes_sources,
-  include_directories: ['.', ecpg_inc, postgres_inc],
-  c_args: ['-DSO_MAJOR_VERSION=3'],
+  include_directories: ecpg_pgtypes_inc,
+  c_args: ecpg_pgtypes_c_args,
+  pic: true,
+  dependencies: [frontend_code],
+  kwargs: default_lib_args,
+)
+ecpg_targets += ecpg_pgtypes_st
+
+ecpg_pgtypes_so = shared_library('libpgtypes',
+  ecpg_pgtypes_so_sources,
+  include_directories: ecpg_pgtypes_inc,
+  c_args: ecpg_pgtypes_c_args,
+  link_whole: ecpg_pgtypes_st,
   dependencies: [frontend_code],
   version: '3.' + pg_version_major.to_string(),
   soversion: host_system != 'windows' ? '3' : '',
@@ -21,10 +37,10 @@ ecpg_pgtypes = both_libraries('libpgtypes',
   link_depends: export_file,
   kwargs: default_lib_args,
 )
-ecpg_targets += [ecpg_pgtypes.get_shared_lib(), ecpg_pgtypes.get_static_lib()]
+ecpg_targets += ecpg_pgtypes_so
 
 pkgconfig.generate(
-  ecpg_pgtypes.get_shared_lib(),
+  ecpg_pgtypes_so,
   description: 'PostgreSQL libpgtypes library',
   url: pg_url,
 )

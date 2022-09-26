@@ -49,8 +49,8 @@ libpq_st = static_library('libpq',
   kwargs: default_lib_args,
 )
 
-# not using both_libraries here, causes problems with precompiled headers and
-# resource files with msbuild
+# not using both_libraries() here as the resource file should only be in the
+# shared library
 libpq_so = shared_library('libpq',
   dependencies: libpq_deps,
   include_directories: [libpq_inc, postgres_inc],

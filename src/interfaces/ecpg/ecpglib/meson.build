@@ -10,15 +10,32 @@ ecpglib_sources = files(
   'sqlda.c',
   'typename.c',
 )
+ecpglib_so_sources = [] # only for shared lib, in addition to above
 
-export_file = custom_target('libpq.exports', kwargs: gen_export_kwargs)
+ecpglib_inc = ['.', ecpg_inc, postgres_inc]
+ecpglib_c_args = ['-DSO_MAJOR_VERSION=6']
+export_file = custom_target('libecpg.exports', kwargs: gen_export_kwargs)
 
-ecpglib = both_libraries('libecpg',
+# not using both_libraries(), as the resource file should only be in the
+# shared library
+ecpglib_st = static_library('libecpg',
   ecpglib_sources,
-  include_directories: ['.', ecpg_inc, postgres_inc],
-  c_args: ['-DSO_MAJOR_VERSION=6'],
+  include_directories: ecpglib_inc,
+  c_args: ecpglib_c_args,
+  pic: true,
   dependencies: [frontend_code, libpq, thread_dep],
-  link_with: [ecpg_pgtypes],
+  link_with: [ecpg_pgtypes_so],
+  kwargs: default_lib_args,
+)
+ecpg_targets += ecpglib_st
+
+ecpglib_so = shared_library('libecpg',
+  ecpglib_so_sources,
+  include_directories: ecpglib_inc,
+  c_args: ecpglib_c_args,
+  dependencies: [frontend_code, libpq, thread_dep],
+  link_whole: ecpglib_st,
+  link_with: [ecpg_pgtypes_so],
   soversion: host_system != 'windows' ? '6' : '',
   darwin_versions: ['6', '6.' + pg_version_major.to_string()],
   version: '6.' + pg_version_major.to_string(),
@@ -26,10 +43,11 @@ ecpglib = both_libraries('libecpg',
   link_depends: export_file,
   kwargs: default_lib_args,
 )
-ecpg_targets += [ecpglib.get_shared_lib(), ecpglib.get_static_lib()]
+ecpg_targets += ecpglib_so
 
 pkgconfig.generate(
-  ecpglib.get_shared_lib(),
+  ecpglib_so,
+  requires_private: 'libpgtypes',
   description: 'PostgreSQL libecpg library',
   url: pg_url,
 )
