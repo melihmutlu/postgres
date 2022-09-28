@@ -560,8 +560,7 @@ task:
 
   configure_script:
     # Try to configure with the cache file, and retry without if it fails, in case the flags changed.
-    - C:\msys64\usr\bin\dash.exe -lc "export PATH=%BUILD_DIR%:/%BUILD_DIR%/tmp_install:$PATH &&
-      cd %CIRRUS_WORKING_DIR% &&
+    - C:\msys64\usr\bin\dash.exe -lc "cd %CIRRUS_WORKING_DIR% &&
       meson setup --buildtype=debug -Dcassert=true %BUILD_DIR%"
 
   build_script:
