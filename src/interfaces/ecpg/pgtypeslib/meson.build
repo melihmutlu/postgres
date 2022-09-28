@@ -25,6 +25,7 @@ ecpg_pgtypes_st = static_library('libpgtypes',
   include_directories: ecpg_pgtypes_inc,
   c_args: ecpg_pgtypes_c_args,
   pic: true,
+  c_pch: pch_postgres_fe_h,
   dependencies: [frontend_code],
   kwargs: default_lib_args,
 )
