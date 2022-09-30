@@ -16,6 +16,7 @@ project('postgresql',
   default_options: [
     'warning_level=1', #-Wall equivalent
     'buildtype=release',
+    'prefix=/usr/local/pgsql',
   ]
 )
 
