@@ -570,7 +570,7 @@ task:
   configure_script:
     # Try to configure with the cache file, and retry without if it fails, in case the flags changed.
     - C:\msys64\usr\bin\dash.exe -lc "cd %CIRRUS_WORKING_DIR% &&
-      meson setup --buildtype=debug -Dcassert=true -Db_pch=true %BUILD_DIR%"
+      meson setup --buildtype=debug -Dcassert=true -Db_pch=true -DTAR=%TAR% %BUILD_DIR%"
 
   build_script:
     - C:\msys64\usr\bin\dash.exe -lc "cd %CIRRUS_WORKING_DIR% && ninja -C %BUILD_DIR%"
