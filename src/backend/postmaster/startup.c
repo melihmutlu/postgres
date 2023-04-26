@@ -72,6 +72,9 @@ static TimestampTz startup_progress_phase_start_time;
  */
 static volatile sig_atomic_t startup_progress_timer_expired = false;
 
+/* Indicates whether flushing stats is needed. */
+static volatile sig_atomic_t idle_stats_update_pending = false;
+
 /*
  * Time between progress updates for long-running startup operations.
  */
@@ -206,6 +209,18 @@ HandleStartupProcInterrupts(void)
 	/* Perform logging of memory contexts of this process */
 	if (LogMemoryContextPending)
 		ProcessLogMemoryContextInterrupt();
+
+	if (idle_stats_update_pending)
+	{
+		/* It's time to report wal stats. */
+		pgstat_report_wal(true);
+		idle_stats_update_pending = false;
+	}
+	else if (!get_timeout_active(IDLE_STATS_UPDATE_TIMEOUT))
+	{
+		/* Set the next timeout. */
+		enable_idle_stats_update_timeout();
+	}
 }
 
 
@@ -384,4 +399,23 @@ has_startup_progress_timeout_expired(long *secs, int *usecs)
 	startup_progress_timer_expired = false;
 
 	return true;
+}
+
+/* Set a flag indicating that it's time to flush wal stats. */
+void
+idle_stats_update_timeout_handler(void)
+{
+	idle_stats_update_pending = true;
+	WakeupRecovery();
+}
+
+/* Enable the timeout set for wal stat flush. */
+void
+enable_idle_stats_update_timeout(void)
+{
+	TimestampTz fin_time;
+
+	fin_time = TimestampTzPlusMilliseconds(GetCurrentTimestamp(),
+										   PGSTAT_MIN_INTERVAL);
+	enable_timeout_at(IDLE_STATS_UPDATE_TIMEOUT, fin_time);
 }

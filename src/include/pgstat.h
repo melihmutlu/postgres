@@ -31,6 +31,20 @@
 /* Default directory to store temporary statistics data in */
 #define PG_STAT_TMP_DIR		"pg_stat_tmp"
 
+/* ----------
+ * Timer definitions.
+ *
+ * In milliseconds.
+ * ----------
+ */
+
+/* minimum interval non-forced stats flushes.*/
+#define PGSTAT_MIN_INTERVAL			1000
+/* how long until to block flushing pending stats updates */
+#define PGSTAT_MAX_INTERVAL			60000
+/* when to call pgstat_report_stat() again, even when idle */
+#define PGSTAT_IDLE_INTERVAL		10000
+
 /* The types of statistics entries */
 typedef enum PgStat_Kind
 {

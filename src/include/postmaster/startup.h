@@ -38,4 +38,7 @@ extern void begin_startup_progress_phase(void);
 extern void startup_progress_timeout_handler(void);
 extern bool has_startup_progress_timeout_expired(long *secs, int *usecs);
 
+extern void enable_idle_stats_update_timeout(void);
+extern void idle_stats_update_timeout_handler(void);
+
 #endif							/* _STARTUP_H */

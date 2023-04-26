@@ -63,6 +63,7 @@
 #include "utils/pg_lsn.h"
 #include "utils/ps_status.h"
 #include "utils/pg_rusage.h"
+#include "utils/timeout.h"
 
 /* Unsupported old recovery command file names (relative to $PGDATA) */
 #define RECOVERY_COMMAND_FILE	"recovery.conf"
@@ -1628,6 +1629,10 @@ PerformWalRecovery(void)
 	 */
 	CheckRecoveryConsistency();
 
+	/* Register the timeout to flush wal stats when it's needed. */
+	RegisterTimeout(IDLE_STATS_UPDATE_TIMEOUT,
+					idle_stats_update_timeout_handler);
+
 	/*
 	 * Find the first record that logically follows the checkpoint --- it
 	 * might physically precede it, though.
@@ -1665,6 +1670,8 @@ PerformWalRecovery(void)
 		/* Prepare to report progress of the redo phase. */
 		if (!StandbyMode)
 			begin_startup_progress_phase();
+
+		enable_idle_stats_update_timeout();
 
 		/*
 		 * main redo apply loop
