@@ -19,6 +19,7 @@
 #include "datatype/timestamp.h"
 #include "miscadmin.h"
 #include "replication/logicalrelation.h"
+#include "replication/walreceiver.h"
 #include "storage/buffile.h"
 #include "storage/fileset.h"
 #include "storage/lock.h"
@@ -265,7 +266,7 @@ extern void maybe_reread_subscription(void);
 
 extern void stream_cleanup_files(Oid subid, TransactionId xid);
 
-extern void InitializeApplyWorker(void);
+extern void InitializeLogRepWorker(void);
 
 extern void store_flush_position(XLogRecPtr remote_lsn, XLogRecPtr local_lsn);
 
@@ -325,5 +326,12 @@ am_parallel_apply_worker(void)
 {
 	return isParallelApplyWorker(MyLogicalRepWorker);
 }
+
+
+extern void set_stream_options(WalRcvStreamOptions *options,
+							   char *slotname,
+							   XLogRecPtr *origin_startpos);
+extern void start_apply(XLogRecPtr origin_startpos);
+extern void DisableSubscriptionAndExit(void);
 
 #endif							/* WORKER_INTERNAL_H */

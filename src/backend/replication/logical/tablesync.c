@@ -104,17 +104,21 @@
 #include "nodes/makefuncs.h"
 #include "parser/parse_relation.h"
 #include "pgstat.h"
+#include "postmaster/interrupt.h"
 #include "replication/logicallauncher.h"
 #include "replication/logicalrelation.h"
+#include "replication/logicalworker.h"
 #include "replication/walreceiver.h"
 #include "replication/worker_internal.h"
 #include "replication/slot.h"
 #include "replication/origin.h"
 #include "storage/ipc.h"
 #include "storage/lmgr.h"
+#include "tcop/tcopprot.h"
 #include "utils/acl.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
+#include "utils/inval.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/rls.h"
@@ -1582,6 +1586,134 @@ FetchTableStates(bool *started_tx)
 	}
 
 	return has_subrels;
+}
+
+/*
+ * Execute the initial sync with error handling. Disable the subscription,
+ * if it's required.
+ *
+ * Allocate the slot name in long-lived context on return. Note that we don't
+ * handle FATAL errors which are probably because of system resource error and
+ * are not repeatable.
+ */
+static void
+start_table_sync(XLogRecPtr *origin_startpos, char **myslotname)
+{
+	char	   *syncslotname = NULL;
+
+	Assert(am_tablesync_worker());
+
+	PG_TRY();
+	{
+		/* Call initial sync. */
+		syncslotname = LogicalRepSyncTableStart(origin_startpos);
+	}
+	PG_CATCH();
+	{
+		if (MySubscription->disableonerr)
+			DisableSubscriptionAndExit();
+		else
+		{
+			/*
+			 * Report the worker failed during table synchronization. Abort
+			 * the current transaction so that the stats message is sent in an
+			 * idle state.
+			 */
+			AbortOutOfAnyTransaction();
+			pgstat_report_subscription_error(MySubscription->oid, false);
+
+			PG_RE_THROW();
+		}
+	}
+	PG_END_TRY();
+
+	/* allocate slot name in long-lived context */
+	*myslotname = MemoryContextStrdup(ApplyContext, syncslotname);
+	pfree(syncslotname);
+}
+
+/*
+ * Runs the tablesync worker.
+ *
+ * It starts syncing tables. After a successful sync, sets streaming options
+ * and starts streaming to catchup.
+ */
+static void
+run_tablesync_worker(WalRcvStreamOptions *options,
+					 char *slotname,
+					 char *originname,
+					 int originname_size,
+					 XLogRecPtr *origin_startpos)
+{
+	/* Start table synchronization. */
+	start_table_sync(origin_startpos, &slotname);
+
+	ReplicationOriginNameForLogicalRep(MySubscription->oid,
+									   MyLogicalRepWorker->relid,
+									   originname,
+									   originname_size);
+
+	set_apply_error_context_origin(originname);
+
+	set_stream_options(options, slotname, origin_startpos);
+
+	walrcv_startstreaming(LogRepWorkerWalRcvConn, options);
+
+	/* Start applying changes to catchup. */
+	start_apply(*origin_startpos);
+}
+
+/* Logical Replication Tablesync worker entry point */
+void
+TablesyncWorkerMain(Datum main_arg)
+{
+	int			worker_slot = DatumGetInt32(main_arg);
+	char		originname[NAMEDATALEN];
+	XLogRecPtr	origin_startpos = InvalidXLogRecPtr;
+	char	   *myslotname = NULL;
+	WalRcvStreamOptions options;
+
+	/* Attach to slot */
+	logicalrep_worker_attach(worker_slot);
+
+	/* Setup signal handling */
+	pqsignal(SIGHUP, SignalHandlerForConfigReload);
+	pqsignal(SIGTERM, die);
+	BackgroundWorkerUnblockSignals();
+
+	/*
+	 * We don't currently need any ResourceOwner in a walreceiver process, but
+	 * if we did, we could call CreateAuxProcessResourceOwner here.
+	 */
+
+	/* Initialise stats to a sanish value */
+	MyLogicalRepWorker->last_send_time = MyLogicalRepWorker->last_recv_time =
+		MyLogicalRepWorker->reply_time = GetCurrentTimestamp();
+
+	/* Load the libpq-specific functions */
+	load_file("libpqwalreceiver", false);
+
+	InitializeLogRepWorker();
+
+	/* Connect to the origin and start the replication. */
+	elog(DEBUG1, "connecting to publisher using connection string \"%s\"",
+		 MySubscription->conninfo);
+
+	/*
+	 * Setup callback for syscache so that we know when something changes in
+	 * the subscription relation state.
+	 */
+	CacheRegisterSyscacheCallback(SUBSCRIPTIONRELMAP,
+								  invalidate_syncing_table_states,
+								  (Datum) 0);
+
+	run_tablesync_worker(&options,
+						 myslotname,
+						 originname,
+						 sizeof(originname),
+						 &origin_startpos);
+
+	finish_sync_worker();
 }
 
 /*
