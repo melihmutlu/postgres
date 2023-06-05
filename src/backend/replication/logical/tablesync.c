@@ -131,7 +131,7 @@ static StringInfo copybuf = NULL;
 /*
  * Exit routine for synchronization worker.
  */
-static void
+void
 pg_attribute_noreturn()
 finish_sync_worker(void)
 {

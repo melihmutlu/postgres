@@ -265,7 +265,7 @@ extern void maybe_reread_subscription(void);
 
 extern void stream_cleanup_files(Oid subid, TransactionId xid);
 
-extern void InitializeApplyWorker(void);
+extern void InitializeLogRepWorker(void);
 
 extern void store_flush_position(XLogRecPtr remote_lsn, XLogRecPtr local_lsn);
 
@@ -306,6 +306,8 @@ extern void pa_xact_finish(ParallelApplyWorkerInfo *winfo,
 						   XLogRecPtr remote_lsn);
 
 #define isParallelApplyWorker(worker) ((worker)->leader_pid != InvalidPid)
+
+extern void finish_sync_worker(void);
 
 static inline bool
 am_tablesync_worker(void)
