@@ -57,6 +57,12 @@ typedef struct LogicalRepWorker
 	slock_t		relmutex;
 
 	/*
+	 * Indicates whether tablesync worker has completed sycning its assigned
+	 * table. If true, no need to continue with that table.
+	 */
+	bool		is_sync_completed;
+
+	/*
 	 * Used to create the changes and subxact files for the streaming
 	 * transactions.  Upon the arrival of the first streaming transaction or
 	 * when the first-time leader apply worker times out while sending changes
@@ -308,6 +314,7 @@ extern void pa_xact_finish(ParallelApplyWorkerInfo *winfo,
 #define isParallelApplyWorker(worker) ((worker)->leader_pid != InvalidPid)
 
 extern void finish_sync_worker(void);
+extern void clean_sync_worker(void);
 
 static inline bool
 am_tablesync_worker(void)
