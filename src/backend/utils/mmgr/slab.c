@@ -104,7 +104,7 @@ typedef struct SlabContext
 {
 	MemoryContextData header;	/* Standard memory-context fields */
 	/* Allocation parameters for this context: */
-	Size		chunkSize;		/* the requested (non-aligned) chunk size */
+	uint32		chunkSize;		/* the requested (non-aligned) chunk size */
 	Size		fullChunkSize;	/* chunk size with chunk header and alignment */
 	Size		blockSize;		/* the size to make each block of chunks */
 	int32		chunksPerBlock; /* number of chunks that fit in 1 block */
@@ -374,7 +374,7 @@ SlabContextCreate(MemoryContext parent,
 	 */
 
 	/* Fill in SlabContext-specific header fields */
-	slab->chunkSize = chunkSize;
+	slab->chunkSize = (Size) chunkSize;
 	slab->fullChunkSize = fullChunkSize;
 	slab->blockSize = blockSize;
 	slab->chunksPerBlock = chunksPerBlock;
@@ -506,7 +506,7 @@ SlabAlloc(MemoryContext context, Size size)
 
 	/* make sure we only allow correct request size */
 	if (unlikely(size != slab->chunkSize))
-		elog(ERROR, "unexpected alloc chunk size %zu (expected %zu)",
+		elog(ERROR, "unexpected alloc chunk size %zu (expected %u)",
 			 size, slab->chunkSize);
 
 	/*
