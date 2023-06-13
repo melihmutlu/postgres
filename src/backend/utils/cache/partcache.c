@@ -65,11 +65,11 @@ RelationGetPartitionKey(Relation rel)
  *
  * Partitioning key data is a complex structure; to avoid complicated logic to
  * free individual elements whenever the relcache entry is flushed, we give it
- * its own memory context, a child of CacheMemoryContext, which can easily be
+ * its own memory context, a child of RelCacheContext, which can easily be
  * deleted on its own.  To avoid leaking memory in that context in case of an
  * error partway through this function, the context is initially created as a
- * child of CurTransactionContext and only re-parented to CacheMemoryContext
- * at the end, when no further errors are possible.  Also, we don't make this
+ * child of CurTransactionContext and only re-parented to RelCacheContext at
+ * the end, when no further errors are possible.  Also, we don't make this
  * context the current context except in very brief code sections, out of fear
  * that some of our callees allocate memory on their own which would be leaked
  * permanently.
@@ -263,7 +263,7 @@ RelationBuildPartitionKey(Relation relation)
 	 * Success --- reparent our context and make the relcache point to the
 	 * newly constructed key
 	 */
-	MemoryContextSetParent(partkeycxt, CacheMemoryContext);
+	MemoryContextSetParent(partkeycxt, RelCacheContext);
 	relation->rd_partkeycxt = partkeycxt;
 	relation->rd_partkey = key;
 }
@@ -411,7 +411,7 @@ generate_partition_qual(Relation rel)
 	 */
 	if (result != NIL)
 	{
-		rel->rd_partcheckcxt = AllocSetContextCreate(CacheMemoryContext,
+		rel->rd_partcheckcxt = AllocSetContextCreate(RelCacheContext,
 													 "partition constraint",
 													 ALLOCSET_SMALL_SIZES);
 		MemoryContextCopyAndSetIdentifier(rel->rd_partcheckcxt,

@@ -115,10 +115,10 @@ RelationGetPartitionDesc(Relation rel, bool omit_detached)
  *
  * Partition descriptor is a complex structure; to avoid complicated logic to
  * free individual elements whenever the relcache entry is flushed, we give it
- * its own memory context, a child of CacheMemoryContext, which can easily be
+ * its own memory context, a child of RelCacheContext, which can easily be
  * deleted on its own.  To avoid leaking memory in that context in case of an
  * error partway through this function, the context is initially created as a
- * child of CurTransactionContext and only re-parented to CacheMemoryContext
+ * child of CurTransactionContext and only re-parented to RelCacheContext
  * at the end, when no further errors are possible.  Also, we don't make this
  * context the current context except in very brief code sections, out of fear
  * that some of our callees allocate memory on their own which would be leaked
@@ -373,7 +373,7 @@ retry:
 	 * We have a fully valid partdesc.  Reparent it so that it has the right
 	 * lifespan.
 	 */
-	MemoryContextSetParent(new_pdcxt, CacheMemoryContext);
+	MemoryContextSetParent(new_pdcxt, RelCacheContext);
 
 	/*
 	 * Store it into relcache.

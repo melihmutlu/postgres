@@ -449,8 +449,8 @@ GetFdwRoutineForRelation(Relation relation, bool makecopy)
 		/* Get the info by consulting the catalogs and the FDW code */
 		fdwroutine = GetFdwRoutineByRelId(RelationGetRelid(relation));
 
-		/* Save the data for later reuse in CacheMemoryContext */
-		cfdwroutine = (FdwRoutine *) MemoryContextAlloc(CacheMemoryContext,
+		/* Save the data for later reuse in RelCacheContext */
+		cfdwroutine = (FdwRoutine *) MemoryContextAlloc(RelCacheContext,
 														sizeof(FdwRoutine));
 		memcpy(cfdwroutine, fdwroutine, sizeof(FdwRoutine));
 		relation->rd_fdwroutine = cfdwroutine;

@@ -95,6 +95,7 @@ extern int	errtableconstraint(Relation rel, const char *conname);
 /*
  * Routines for backend startup
  */
+extern void CreateRelCacheContext(void);
 extern void RelationCacheInitialize(void);
 extern void RelationCacheInitializePhase2(void);
 extern void RelationCacheInitializePhase3(void);
@@ -151,5 +152,7 @@ extern PGDLLIMPORT bool criticalRelcachesBuilt;
 
 /* should be used only by relcache.c and postinit.c */
 extern PGDLLIMPORT bool criticalSharedRelcachesBuilt;
+
+extern PGDLLIMPORT MemoryContext RelCacheContext;
 
 #endif							/* RELCACHE_H */

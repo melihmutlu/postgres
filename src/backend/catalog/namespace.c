@@ -321,8 +321,11 @@ spcache_init(void)
 
 	if (SearchPathCacheContext == NULL)
 	{
+		if (!CacheMemoryContext)
+			CreateCacheMemoryContext();
+
 		/* Make the context we'll keep search path cache hashtable in */
-		SearchPathCacheContext = AllocSetContextCreate(TopMemoryContext,
+		SearchPathCacheContext = AllocSetContextCreate(CacheMemoryContext,
 													   "search_path processing cache",
 													   ALLOCSET_DEFAULT_SIZES);
 	}

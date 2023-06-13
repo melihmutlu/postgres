@@ -78,6 +78,8 @@
 /* The main type cache hashtable searched by lookup_type_cache */
 static HTAB *TypeCacheHash = NULL;
 
+static MemoryContext TypCacheContext = NULL;
+
 /*
  * The mapping of relation's OID to the corresponding composite type OID.
  * We're keeping the map entry when the corresponding typentry has something
@@ -362,6 +364,20 @@ type_cache_syshash(const void *key, Size keysize)
 	return GetSysCacheHashValue1(TYPEOID, ObjectIdGetDatum(*(const Oid *) key));
 }
 
+static void
+CreateTypCacheContext(void)
+{
+	if (!CacheMemoryContext)
+		CreateCacheMemoryContext();
+
+	/*
+	 * TypCache does not have a separate memory context, CacheMemoryContext is
+	 * used.
+	 */
+	if (!TypCacheContext)
+		TypCacheContext = CacheMemoryContext;
+}
+
 /*
  * lookup_type_cache
  *
@@ -421,16 +437,16 @@ lookup_type_cache(Oid type_id, int flags)
 		CacheRegisterSyscacheCallback(CLAOID, TypeCacheOpcCallback, (Datum) 0);
 		CacheRegisterSyscacheCallback(CONSTROID, TypeCacheConstrCallback, (Datum) 0);
 
-		/* Also make sure CacheMemoryContext exists */
-		if (!CacheMemoryContext)
-			CreateCacheMemoryContext();
+		/* Also make sure TypCacheContext exists */
+		if (!TypCacheContext)
+			CreateTypCacheContext();
 
 		/*
 		 * reserve enough in_progress_list slots for many cases
 		 */
 		allocsize = 4;
 		in_progress_list =
-			MemoryContextAlloc(CacheMemoryContext,
+			MemoryContextAlloc(TypCacheContext,
 							   allocsize * sizeof(*in_progress_list));
 		in_progress_list_maxlen = allocsize;
 	}
@@ -854,7 +870,7 @@ lookup_type_cache(Oid type_id, int flags)
 	/*
 	 * Set up fmgr lookup info as requested
 	 *
-	 * Note: we tell fmgr the finfo structures live in CacheMemoryContext,
+	 * Note: we tell fmgr the finfo structures live in TypCacheContext,
 	 * which is not quite right (they're really in the hash table's private
 	 * memory context) but this will do for our purposes.
 	 *
@@ -872,21 +888,21 @@ lookup_type_cache(Oid type_id, int flags)
 		eq_opr_func = get_opcode(typentry->eq_opr);
 		if (eq_opr_func != InvalidOid)
 			fmgr_info_cxt(eq_opr_func, &typentry->eq_opr_finfo,
-						  CacheMemoryContext);
+						  TypCacheContext);
 	}
 	if ((flags & TYPECACHE_CMP_PROC_FINFO) &&
 		typentry->cmp_proc_finfo.fn_oid == InvalidOid &&
 		typentry->cmp_proc != InvalidOid)
 	{
 		fmgr_info_cxt(typentry->cmp_proc, &typentry->cmp_proc_finfo,
-					  CacheMemoryContext);
+					  TypCacheContext);
 	}
 	if ((flags & TYPECACHE_HASH_PROC_FINFO) &&
 		typentry->hash_proc_finfo.fn_oid == InvalidOid &&
 		typentry->hash_proc != InvalidOid)
 	{
 		fmgr_info_cxt(typentry->hash_proc, &typentry->hash_proc_finfo,
-					  CacheMemoryContext);
+					  TypCacheContext);
 	}
 	if ((flags & TYPECACHE_HASH_EXTENDED_PROC_FINFO) &&
 		typentry->hash_extended_proc_finfo.fn_oid == InvalidOid &&
@@ -894,7 +910,7 @@ lookup_type_cache(Oid type_id, int flags)
 	{
 		fmgr_info_cxt(typentry->hash_extended_proc,
 					  &typentry->hash_extended_proc_finfo,
-					  CacheMemoryContext);
+					  TypCacheContext);
 	}
 
 	/*
@@ -1039,13 +1055,13 @@ load_rangetype_info(TypeCacheEntry *typentry)
 
 	/* set up cached fmgrinfo structs */
 	fmgr_info_cxt(cmpFnOid, &typentry->rng_cmp_proc_finfo,
-				  CacheMemoryContext);
+				  TypCacheContext);
 	if (OidIsValid(canonicalOid))
 		fmgr_info_cxt(canonicalOid, &typentry->rng_canonical_finfo,
-					  CacheMemoryContext);
+					  TypCacheContext);
 	if (OidIsValid(subdiffOid))
 		fmgr_info_cxt(subdiffOid, &typentry->rng_subdiff_finfo,
-					  CacheMemoryContext);
+					  TypCacheContext);
 
 	/* Lastly, set up link to the element type --- this marks data valid */
 	typentry->rngelemtype = lookup_type_cache(subtypeOid, 0);
@@ -1074,7 +1090,7 @@ load_multirangetype_info(TypeCacheEntry *typentry)
  * Note: we assume we're called in a relatively short-lived context, so it's
  * okay to leak data into the current context while scanning pg_constraint.
  * We build the new DomainConstraintCache data in a context underneath
- * CurrentMemoryContext, and reparent it under CacheMemoryContext when
+ * CurrentMemoryContext, and reparent it under TypCacheContext when
  * complete.
  */
 static void
@@ -1296,12 +1312,12 @@ load_domaintype_info(TypeCacheEntry *typentry)
 	}
 
 	/*
-	 * If we made a constraint object, move it into CacheMemoryContext and
+	 * If we made a constraint object, move it into TypCacheContext and
 	 * attach it to the typcache entry.
 	 */
 	if (dcc)
 	{
-		MemoryContextSetParent(dcc->dccContext, CacheMemoryContext);
+		MemoryContextSetParent(dcc->dccContext, TypCacheContext);
 		typentry->domainData = dcc;
 		dcc->dccRefCount++;		/* count the typcache's reference */
 	}
@@ -1799,7 +1815,7 @@ ensure_record_cache_typmod_slot_exists(int32 typmod)
 	if (RecordCacheArray == NULL)
 	{
 		RecordCacheArray = (RecordCacheArrayEntry *)
-			MemoryContextAllocZero(CacheMemoryContext,
+			MemoryContextAllocZero(TypCacheContext,
 								   64 * sizeof(RecordCacheArrayEntry));
 		RecordCacheArrayLen = 64;
 	}
@@ -2059,9 +2075,9 @@ assign_record_type_typmod(TupleDesc tupDesc)
 									  &ctl,
 									  HASH_ELEM | HASH_FUNCTION | HASH_COMPARE);
 
-		/* Also make sure CacheMemoryContext exists */
-		if (!CacheMemoryContext)
-			CreateCacheMemoryContext();
+		/* Also make sure TypCacheContext exists */
+		if (!TypCacheContext)
+			CreateTypCacheContext();
 	}
 
 	/*
@@ -2079,7 +2095,7 @@ assign_record_type_typmod(TupleDesc tupDesc)
 	}
 
 	/* Not present, so need to manufacture an entry */
-	oldcxt = MemoryContextSwitchTo(CacheMemoryContext);
+	oldcxt = MemoryContextSwitchTo(TypCacheContext);
 
 	/* Look in the SharedRecordTypmodRegistry, if attached */
 	entDesc = find_or_make_matching_shared_tupledesc(tupDesc);
@@ -2746,8 +2762,8 @@ load_enum_cache_data(TypeCacheEntry *tcache)
 	/*
 	 * Read all the information for members of the enum type.  We collect the
 	 * info in working memory in the caller's context, and then transfer it to
-	 * permanent memory in CacheMemoryContext.  This minimizes the risk of
-	 * leaking memory from CacheMemoryContext in the event of an error partway
+	 * permanent memory in TypCacheContext.  This minimizes the risk of
+	 * leaking memory from TypCacheContext in the event of an error partway
 	 * through.
 	 */
 	maxitems = 64;
@@ -2851,8 +2867,8 @@ load_enum_cache_data(TypeCacheEntry *tcache)
 			break;
 	}
 
-	/* OK, copy the data into CacheMemoryContext */
-	oldcxt = MemoryContextSwitchTo(CacheMemoryContext);
+	/* OK, copy the data into TypCacheContext */
+	oldcxt = MemoryContextSwitchTo(TypCacheContext);
 	enumdata = (TypeCacheEnumData *)
 		palloc(offsetof(TypeCacheEnumData, enum_values) +
 			   numitems * sizeof(EnumItem));

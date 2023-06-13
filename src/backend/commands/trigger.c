@@ -1851,7 +1851,7 @@ EnableDisableTrigger(Relation rel, const char *tgname, Oid tgparent,
  * Build trigger data to attach to the given relcache entry.
  *
  * Note that trigger data attached to a relcache entry must be stored in
- * CacheMemoryContext to ensure it survives as long as the relcache entry.
+ * RelCacheContext to ensure it survives as long as the relcache entry.
  * But we should be running in a less long-lived working context.  To avoid
  * leaking cache memory if this routine fails partway through, we build a
  * temporary TriggerDesc in working memory and then copy the completed
@@ -1998,7 +1998,7 @@ RelationBuildTriggers(Relation relation)
 		SetTriggerFlags(trigdesc, &(triggers[i]));
 
 	/* Copy completed trigdesc into cache storage */
-	oldContext = MemoryContextSwitchTo(CacheMemoryContext);
+	oldContext = MemoryContextSwitchTo(RelCacheContext);
 	relation->trigdesc = CopyTriggerDesc(trigdesc);
 	MemoryContextSwitchTo(oldContext);
 

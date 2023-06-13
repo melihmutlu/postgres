@@ -50,6 +50,8 @@ static _SPI_connection *_SPI_current = NULL;
 static int	_SPI_stack_depth = 0;	/* allocated size of _SPI_stack */
 static int	_SPI_connected = -1;	/* current stack index */
 
+static MemoryContext SPICacheContext = NULL;
+
 typedef struct SPICallbackArg
 {
 	const char *query;
@@ -972,6 +974,16 @@ SPI_prepare_params(const char *src,
 	return result;
 }
 
+static void
+CreateSPICacheContext(void)
+{
+	/*
+	 * SPI does not have a separate memory context, CacheMemoryContext is used.
+	 */
+	if (!SPICacheContext)
+		SPICacheContext = CacheMemoryContext;
+}
+
 int
 SPI_keepplan(SPIPlanPtr plan)
 {
@@ -981,13 +993,16 @@ SPI_keepplan(SPIPlanPtr plan)
 		plan->saved || plan->oneshot)
 		return SPI_ERROR_ARGUMENT;
 
+	if (!SPICacheContext)
+		CreateSPICacheContext();
+
 	/*
-	 * Mark it saved, reparent it under CacheMemoryContext, and mark all the
+	 * Mark it saved, reparent it under SPICacheContext, and mark all the
 	 * component CachedPlanSources as saved.  This sequence cannot fail
 	 * partway through, so there's no risk of long-term memory leakage.
 	 */
 	plan->saved = true;
-	MemoryContextSetParent(plan->plancxt, CacheMemoryContext);
+	MemoryContextSetParent(plan->plancxt, SPICacheContext);
 
 	foreach(lc, plan->plancache_list)
 	{
@@ -3255,13 +3270,16 @@ _SPI_save_plan(SPIPlanPtr plan)
 
 	MemoryContextSwitchTo(oldcxt);
 
+	if (!SPICacheContext)
+		CreateSPICacheContext();
+
 	/*
-	 * Mark it saved, reparent it under CacheMemoryContext, and mark all the
+	 * Mark it saved, reparent it under SPICacheContext, and mark all the
 	 * component CachedPlanSources as saved.  This sequence cannot fail
 	 * partway through, so there's no risk of long-term memory leakage.
 	 */
 	newplan->saved = true;
-	MemoryContextSetParent(newplan->plancxt, CacheMemoryContext);
+	MemoryContextSetParent(newplan->plancxt, SPICacheContext);
 
 	foreach(lc, newplan->plancache_list)
 	{

@@ -86,9 +86,8 @@ InitializeTableSpaceCache(void)
 		hash_create("TableSpace cache", 16, &ctl,
 					HASH_ELEM | HASH_BLOBS);
 
-	/* Make sure we've initialized CacheMemoryContext. */
-	if (!CacheMemoryContext)
-		CreateCacheMemoryContext();
+	if (!RelCacheContext)
+		CreateRelCacheContext();
 
 	/* Watch for invalidation events. */
 	CacheRegisterSyscacheCallback(TABLESPACEOID,
@@ -151,7 +150,7 @@ get_tablespace(Oid spcid)
 		{
 			bytea	   *bytea_opts = tablespace_reloptions(datum, false);
 
-			opts = MemoryContextAlloc(CacheMemoryContext, VARSIZE(bytea_opts));
+			opts = MemoryContextAlloc(RelCacheContext, VARSIZE(bytea_opts));
 			memcpy(opts, bytea_opts, VARSIZE(bytea_opts));
 		}
 		ReleaseSysCache(tp);

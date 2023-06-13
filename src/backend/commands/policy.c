@@ -313,10 +313,10 @@ RelationBuildRowSecurity(Relation relation)
 
 	/*
 	 * Success.  Reparent the descriptor's memory context under
-	 * CacheMemoryContext so that it will live indefinitely, then attach the
+	 * RelCacheContext so that it will live indefinitely, then attach the
 	 * policy descriptor to the relcache entry.
 	 */
-	MemoryContextSetParent(rscxt, CacheMemoryContext);
+	MemoryContextSetParent(rscxt, RelCacheContext);
 
 	relation->rd_rsdesc = rsdesc;
 }

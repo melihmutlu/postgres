@@ -18333,7 +18333,7 @@ register_on_commit_action(Oid relid, OnCommitAction action)
 	if (action == ONCOMMIT_NOOP || action == ONCOMMIT_PRESERVE_ROWS)
 		return;
 
-	oldcxt = MemoryContextSwitchTo(CacheMemoryContext);
+	oldcxt = MemoryContextSwitchTo(RelCacheContext);
 
 	oc = (OnCommitItem *) palloc(sizeof(OnCommitItem));
 	oc->relid = relid;

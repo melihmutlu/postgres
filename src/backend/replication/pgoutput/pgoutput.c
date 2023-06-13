@@ -216,6 +216,8 @@ typedef struct PGOutputTxnData
 /* Map used to remember which relation schemas we sent. */
 static HTAB *RelationSyncCache = NULL;
 
+static MemoryContext PgOutputCacheContext = NULL;
+
 static void init_rel_sync_cache(MemoryContext cachectx);
 static void cleanup_rel_sync_cache(TransactionId xid, bool is_commit);
 static RelationSyncEntry *get_rel_sync_entry(PGOutputData *data,
@@ -421,6 +423,17 @@ parse_output_parameters(List *options, PGOutputData *data)
 				errmsg("option \"%s\" missing", "publication_names"));
 }
 
+static void
+CreatePgOutputCacheContext(void)
+{
+	/*
+	 * PgOutput does not have a separate memory context, CacheMemoryContext is
+	 * used.
+	 */
+	if (!PgOutputCacheContext)
+		PgOutputCacheContext = CacheMemoryContext;
+}
+
 /*
  * Initialize this plugin
  */
@@ -448,6 +461,9 @@ pgoutput_startup(LogicalDecodingContext *ctx, OutputPluginOptions *opt,
 
 	/* This plugin uses binary protocol. */
 	opt->output_type = OUTPUT_PLUGIN_BINARY_OUTPUT;
+
+	if (!PgOutputCacheContext)
+		CreatePgOutputCacheContext();
 
 	/*
 	 * This is replication start and not slot initialization.
@@ -535,7 +551,7 @@ pgoutput_startup(LogicalDecodingContext *ctx, OutputPluginOptions *opt,
 		}
 
 		/* Initialize relation schema cache. */
-		init_rel_sync_cache(CacheMemoryContext);
+		init_rel_sync_cache(PgOutputCacheContext);
 	}
 	else
 	{
@@ -2003,7 +2019,7 @@ set_schema_sent_in_streamed_txn(RelationSyncEntry *entry, TransactionId xid)
 {
 	MemoryContext oldctx;
 
-	oldctx = MemoryContextSwitchTo(CacheMemoryContext);
+	oldctx = MemoryContextSwitchTo(PgOutputCacheContext);
 
 	entry->streamed_txns = lappend_xid(entry->streamed_txns, xid);
 

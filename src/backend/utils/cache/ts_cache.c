@@ -75,6 +75,7 @@ static TSConfigCacheEntry *lastUsedConfig = NULL;
  */
 char	   *TSCurrentConfig = NULL;
 
+static MemoryContext TextSearchCacheContext = NULL;
 static Oid	TSCurrentConfigCache = InvalidOid;
 
 
@@ -106,6 +107,20 @@ InvalidateTSCacheCallBack(Datum arg, int cacheid, uint32 hashvalue)
 		TSCurrentConfigCache = InvalidOid;
 }
 
+static void
+CreateTextSearchCacheContext(void)
+{
+	if (!CacheMemoryContext)
+		CreateCacheMemoryContext();
+
+	/*
+	 * TextSearch cache does not have a separate memory context,
+	 * CacheMemoryContext is used.
+	 */
+	if (!TextSearchCacheContext)
+		TextSearchCacheContext = CacheMemoryContext;
+}
+
 /*
  * Fetch parser cache entry
  */
@@ -127,9 +142,9 @@ lookup_ts_parser_cache(Oid prsId)
 		CacheRegisterSyscacheCallback(TSPARSEROID, InvalidateTSCacheCallBack,
 									  PointerGetDatum(TSParserCacheHash));
 
-		/* Also make sure CacheMemoryContext exists */
-		if (!CacheMemoryContext)
-			CreateCacheMemoryContext();
+		/* Also make sure TextSearchCacheContext exists */
+		if (!TextSearchCacheContext)
+			CreateTextSearchCacheContext();
 	}
 
 	/* Check single-entry cache */
@@ -186,12 +201,12 @@ lookup_ts_parser_cache(Oid prsId)
 
 		ReleaseSysCache(tp);
 
-		fmgr_info_cxt(entry->startOid, &entry->prsstart, CacheMemoryContext);
-		fmgr_info_cxt(entry->tokenOid, &entry->prstoken, CacheMemoryContext);
-		fmgr_info_cxt(entry->endOid, &entry->prsend, CacheMemoryContext);
+		fmgr_info_cxt(entry->startOid, &entry->prsstart, TextSearchCacheContext);
+		fmgr_info_cxt(entry->tokenOid, &entry->prstoken, TextSearchCacheContext);
+		fmgr_info_cxt(entry->endOid, &entry->prsend, TextSearchCacheContext);
 		if (OidIsValid(entry->headlineOid))
 			fmgr_info_cxt(entry->headlineOid, &entry->prsheadline,
-						  CacheMemoryContext);
+						  TextSearchCacheContext);
 
 		entry->isvalid = true;
 	}
@@ -224,9 +239,9 @@ lookup_ts_dictionary_cache(Oid dictId)
 		CacheRegisterSyscacheCallback(TSTEMPLATEOID, InvalidateTSCacheCallBack,
 									  PointerGetDatum(TSDictionaryCacheHash));
 
-		/* Also make sure CacheMemoryContext exists */
-		if (!CacheMemoryContext)
-			CreateCacheMemoryContext();
+		/* Also make sure TextSearchCacheContext exists */
+		if (!TextSearchCacheContext)
+			CreateTextSearchCacheContext();
 	}
 
 	/* Check single-entry cache */
@@ -291,7 +306,7 @@ lookup_ts_dictionary_cache(Oid dictId)
 			Assert(!found);		/* it wasn't there a moment ago */
 
 			/* Create private memory context the first time through */
-			saveCtx = AllocSetContextCreate(CacheMemoryContext,
+			saveCtx = AllocSetContextCreate(TextSearchCacheContext,
 											"TS dictionary",
 											ALLOCSET_SMALL_SIZES);
 			MemoryContextCopyAndSetIdentifier(saveCtx, NameStr(dict->dictname));
@@ -373,9 +388,9 @@ init_ts_config_cache(void)
 	CacheRegisterSyscacheCallback(TSCONFIGMAP, InvalidateTSCacheCallBack,
 								  PointerGetDatum(TSConfigCacheHash));
 
-	/* Also make sure CacheMemoryContext exists */
-	if (!CacheMemoryContext)
-		CreateCacheMemoryContext();
+	/* Also make sure TextSearchCacheContext exists */
+	if (!TextSearchCacheContext)
+		CreateTextSearchCacheContext();
 }
 
 /*
@@ -498,7 +513,7 @@ lookup_ts_config_cache(Oid cfgId)
 				{
 					maplists[maxtokentype].len = ndicts;
 					maplists[maxtokentype].dictIds = (Oid *)
-						MemoryContextAlloc(CacheMemoryContext,
+						MemoryContextAlloc(TextSearchCacheContext,
 										   sizeof(Oid) * ndicts);
 					memcpy(maplists[maxtokentype].dictIds, mapdicts,
 						   sizeof(Oid) * ndicts);
@@ -525,14 +540,14 @@ lookup_ts_config_cache(Oid cfgId)
 			/* save the last token type's dictionaries */
 			maplists[maxtokentype].len = ndicts;
 			maplists[maxtokentype].dictIds = (Oid *)
-				MemoryContextAlloc(CacheMemoryContext,
+				MemoryContextAlloc(TextSearchCacheContext,
 								   sizeof(Oid) * ndicts);
 			memcpy(maplists[maxtokentype].dictIds, mapdicts,
 				   sizeof(Oid) * ndicts);
 			/* and save the overall map */
 			entry->lenmap = maxtokentype + 1;
 			entry->map = (ListDictionary *)
-				MemoryContextAlloc(CacheMemoryContext,
+				MemoryContextAlloc(TextSearchCacheContext,
 								   sizeof(ListDictionary) * entry->lenmap);
 			memcpy(entry->map, maplists,
 				   sizeof(ListDictionary) * entry->lenmap);
