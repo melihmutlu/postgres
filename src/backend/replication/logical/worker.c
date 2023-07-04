@@ -3607,6 +3607,20 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 					MemoryContextReset(ApplyMessageContext);
 				}
 
+				/*
+				 * apply_dispatch() may have gone into apply_handle_commit()
+				 * which can call process_syncing_tables_for_sync.
+				 *
+				 * process_syncing_tables_for_sync decides whether the sync of
+				 * the current table is completed. If it is completed,
+				 * streaming must be already ended. So, we can break the loop.
+				 */
+				if (MyLogicalRepWorker->is_sync_completed)
+				{
+					endofstream = true;
+					break;
+				}
+
 				len = walrcv_receive(LogRepWorkerWalRcvConn, &buf, &fd);
 			}
 		}
@@ -3626,6 +3640,15 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 
 			/* Process any table synchronization changes. */
 			process_syncing_tables(last_received);
+
+			/*
+			 * If is_sync_completed is true, this means that the tablesync
+			 * worker is done with synchronization. Streaming has already been
+			 * ended by process_syncing_tables_for_sync. We should move to the
+			 * next table if needed, or exit.
+			 */
+			if (MyLogicalRepWorker->is_sync_completed)
+				endofstream = true;
 		}
 
 		/* Cleanup the memory. */
@@ -3728,8 +3751,12 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 	error_context_stack = errcallback.previous;
 	apply_error_context_stack = error_context_stack;
 
-	/* All done */
-	walrcv_endstreaming(LogRepWorkerWalRcvConn, &tli);
+	/*
+	 * End streaming here for only apply workers. Ending streaming for
+	 * tablesync workers is deferred until the worker exits its main loop.
+	 */
+	if (!am_tablesync_worker())
+		walrcv_endstreaming(LogRepWorkerWalRcvConn, &tli);
 }
 
 /*
@@ -4603,9 +4630,10 @@ InitializeLogRepWorker(void)
 
 	if (am_tablesync_worker())
 		ereport(LOG,
-				(errmsg("logical replication worker for subscription \"%s\", table \"%s\" has started",
+				(errmsg("logical replication worker for subscription \"%s\", table \"%s\" with relid %u has started",
 						MySubscription->name,
-						get_rel_name(MyLogicalRepWorker->relid))));
+						get_rel_name(MyLogicalRepWorker->relid),
+						MyLogicalRepWorker->relid)));
 	else
 		ereport(LOG,
 				(errmsg("logical replication apply worker for subscription \"%s\" has started",
