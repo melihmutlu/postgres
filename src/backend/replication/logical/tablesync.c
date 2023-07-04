@@ -131,10 +131,12 @@ static StringInfo copybuf = NULL;
 
 /*
  * Exit routine for synchronization worker.
+ *
+ * If reuse_worker is false, at the conclusion of this function the worker
+ * process will exit.
  */
 static void
-pg_attribute_noreturn()
-finish_sync_worker(void)
+finish_sync_worker(bool reuse_worker)
 {
 	/*
 	 * Commit any outstanding transaction. This is the usual case, unless
@@ -146,21 +148,38 @@ finish_sync_worker(void)
 		pgstat_report_stat(true);
 	}
 
+	/*
+	 * Disconnect from the publisher otherwise reusing the sync worker can
+	 * error due to exceeding max_wal_senders.
+	 */
+	if (LogRepWorkerWalRcvConn != NULL)
+	{
+		walrcv_disconnect(LogRepWorkerWalRcvConn);
+		LogRepWorkerWalRcvConn = NULL;
+	}
+
 	/* And flush all writes. */
 	XLogFlush(GetXLogWriteRecPtr());
 
 	StartTransactionCommand();
-	ereport(LOG,
-			(errmsg("logical replication table synchronization worker for subscription \"%s\", table \"%s\" has finished",
-					MySubscription->name,
-					get_rel_name(MyLogicalRepWorker->relid))));
+	if (reuse_worker)
+		ereport(LOG,
+				errmsg("logical replication table synchronization worker for subscription \"%s\" will be reused to sync table \"%s\" with relid %u.",
+						MySubscription->name,
+						get_rel_name(MyLogicalRepWorker->relid),
+						MyLogicalRepWorker->relid));
+	else
+		ereport(LOG,
+				errmsg("logical replication table synchronization worker for subscription \"%s\" has finished",
+						MySubscription->name));
 	CommitTransactionCommand();
 
 	/* Find the leader apply worker and signal it. */
 	logicalrep_worker_wakeup(MyLogicalRepWorker->subid, InvalidOid);
 
 	/* Stop gracefully */
-	proc_exit(0);
+	if (!reuse_worker)
+		proc_exit(0);
 }
 
 /*
@@ -380,7 +399,15 @@ process_syncing_tables_for_sync(XLogRecPtr current_lsn)
 		 */
 		replorigin_drop_by_name(originname, true, false);
 
-		finish_sync_worker();
+		/* Sync worker has completed synchronization of the current table. */
+		MyLogicalRepWorker->relsync_completed = true;
+
+		ereport(LOG,
+				errmsg("logical replication table synchronization for subscription \"%s\", relation \"%s\" with relid %u has finished",
+						MySubscription->name,
+						get_rel_name(MyLogicalRepWorker->relid),
+						MyLogicalRepWorker->relid));
+		CommitTransactionCommand();
 	}
 	else
 		SpinLockRelease(&MyLogicalRepWorker->relmutex);
@@ -1285,7 +1312,7 @@ LogicalRepSyncTableStart(XLogRecPtr *origin_startpos)
 		case SUBREL_STATE_SYNCDONE:
 		case SUBREL_STATE_READY:
 		case SUBREL_STATE_UNKNOWN:
-			finish_sync_worker();	/* doesn't return */
+			finish_sync_worker(false);	/* doesn't return */
 	}
 
 	/* Calculate the name of the tablesync slot. */
@@ -1643,6 +1670,8 @@ run_tablesync_worker()
 	char	   *slotname = NULL;
 	WalRcvStreamOptions options;
 
+	MyLogicalRepWorker->relsync_completed = false;
+
 	start_table_sync(&origin_startpos, &slotname);
 
 	ReplicationOriginNameForLogicalRep(MySubscription->oid,
@@ -1665,12 +1694,78 @@ void
 TablesyncWorkerMain(Datum main_arg)
 {
 	int			worker_slot = DatumGetInt32(main_arg);
+	bool 		done = false;
 
 	SetupApplyOrSyncWorker(worker_slot);
 
-	run_tablesync_worker();
+	/*
+	 * The loop where worker does its job. It loops until there is no relation
+	 * left to sync.
+	 */
+	for (;!done;)
+	{
+		run_tablesync_worker();
 
-	finish_sync_worker();
+		if (IsTransactionState())
+			CommitTransactionCommand();
+
+		if (MyLogicalRepWorker->relsync_completed)
+		{
+			List	   *rstates;
+			ListCell   *lc;
+
+			/*
+			 * This tablesync worker is 'done' unless another table that needs
+			 * syncing is found.
+			 */
+			done = true;
+
+			/* This transaction will be committed by finish_sync_worker. */
+			StartTransactionCommand();
+
+			/*
+			 * Check if there is any table whose relation state is still INIT.
+			 * If a table in INIT state is found, the worker will not be
+			 * finished, it will be reused instead.
+			 */
+			rstates = GetSubscriptionRelations(MySubscription->oid, true);
+
+			foreach(lc, rstates)
+			{
+				SubscriptionRelState *rstate = (SubscriptionRelState *) lfirst(lc);
+
+				if (rstate->state == SUBREL_STATE_SYNCDONE)
+					continue;
+
+				/*
+				 * Take exclusive lock to prevent any other sync worker from
+				 * picking the same table.
+				 */
+				LWLockAcquire(LogicalRepWorkerLock, LW_EXCLUSIVE);
+
+				/*
+				 * Pick the table for the next run if it is not already picked
+				 * up by another worker.
+				 */
+				if (!logicalrep_worker_find(MySubscription->oid, rstate->relid, false))
+				{
+					/* Update worker state for the next table */
+					MyLogicalRepWorker->relid = rstate->relid;
+					MyLogicalRepWorker->relstate = rstate->state;
+					MyLogicalRepWorker->relstate_lsn = rstate->lsn;
+					LWLockRelease(LogicalRepWorkerLock);
+
+					/* Found a table for next iteration */
+					finish_sync_worker(true);
+					done = false;
+					break;
+				}
+				LWLockRelease(LogicalRepWorkerLock);
+			}
+		}
+	}
+
+	finish_sync_worker(false);
 }
 
 /*

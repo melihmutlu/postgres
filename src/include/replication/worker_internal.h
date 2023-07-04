@@ -56,6 +56,8 @@ typedef struct LogicalRepWorker
 	char		relstate;
 	XLogRecPtr	relstate_lsn;
 	slock_t		relmutex;
+	bool		relsync_completed; /* has tablesync finished syncing
+									* the assigned table? */
 
 	/*
 	 * Used to create the changes and subxact files for the streaming
