@@ -39,6 +39,9 @@ typedef struct LogicalRepWorker
 	/* Increased every time the slot is taken by new worker. */
 	uint16		generation;
 
+	/* Slot number of this worker. */
+	int			slot_number;
+
 	/* Pointer to proc array. NULL if not running. */
 	PGPROC	   *proc;
 

@@ -148,16 +148,6 @@ finish_sync_worker(bool reuse_worker)
 		pgstat_report_stat(true);
 	}
 
-	/*
-	 * Disconnect from the publisher otherwise reusing the sync worker can
-	 * error due to exceeding max_wal_senders.
-	 */
-	if (LogRepWorkerWalRcvConn != NULL)
-	{
-		walrcv_disconnect(LogRepWorkerWalRcvConn);
-		LogRepWorkerWalRcvConn = NULL;
-	}
-
 	/* And flush all writes. */
 	XLogFlush(GetXLogWriteRecPtr());
 
@@ -1262,6 +1252,27 @@ ReplicationSlotNameForTablesync(Oid suboid, Oid relid,
 }
 
 /*
+ * Determine the application_name for tablesync workers.
+ *
+ * Previously, the replication slot name was used as application_name. Since
+ * it's possible to reuse tablesync workers now, a tablesync worker can handle
+ * several different replication slots during its lifetime. Therefore, we
+ * cannot use the slot name as application_name anymore. Instead, the slot
+ * number of the tablesync worker is used as a part of the application_name.
+ *
+ * XXX: if the tablesync worker starts to reuse the replication slot during
+ * synchronization, we should again use the replication slot name as
+ * application_name.
+ */
+static void
+ApplicationNameForTablesync(Oid suboid, int worker_slot,
+							char *application_name, Size szapp)
+{
+	snprintf(application_name, szapp, "pg_%u_sync_%i_" UINT64_FORMAT, suboid,
+			 worker_slot, GetSystemIdentifier());
+}
+
+/*
  * Start syncing the table in the sync worker.
  *
  * If nothing needs to be done to sync the table, we exit the worker without
@@ -1322,15 +1333,26 @@ LogicalRepSyncTableStart(XLogRecPtr *origin_startpos)
 									slotname,
 									NAMEDATALEN);
 
-	/*
-	 * Here we use the slot name instead of the subscription name as the
-	 * application_name, so that it is different from the leader apply worker,
-	 * so that synchronous replication can distinguish them.
-	 */
-	LogRepWorkerWalRcvConn =
-		walrcv_connect(MySubscription->conninfo, true,
-					   must_use_password,
-					   slotname, &err);
+	/* Connect to the publisher if haven't done so already. */
+	if (LogRepWorkerWalRcvConn == NULL)
+	{
+		char application_name[NAMEDATALEN];
+
+		/*
+		 * The application_name must differ from the subscription name (used by
+		 * the leader apply worker) because synchronous replication has to be
+		 * able to distinguish this worker from the leader apply worker.
+		 */
+		ApplicationNameForTablesync(MySubscription->oid,
+									MyLogicalRepWorker->slot_number,
+									application_name,
+									NAMEDATALEN);
+		LogRepWorkerWalRcvConn =
+			walrcv_connect(MySubscription->conninfo, true,
+						   must_use_password,
+						   application_name, &err);
+	}
+
 	if (LogRepWorkerWalRcvConn == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_CONNECTION_FAILURE),
