@@ -58,6 +58,12 @@ typedef struct LogicalRepWorker
 	slock_t		relmutex;
 
 	/*
+	 * Indicates whether tablesync worker has completed sycning its assigned
+	 * table. If true, no need to continue with that table.
+	 */
+	bool		is_sync_completed;
+
+	/*
 	 * Used to create the changes and subxact files for the streaming
 	 * transactions.  Upon the arrival of the first streaming transaction or
 	 * when the first-time leader apply worker times out while sending changes
@@ -333,5 +339,6 @@ extern void set_stream_options(WalRcvStreamOptions *options,
 							   XLogRecPtr *origin_startpos);
 extern void start_apply(XLogRecPtr origin_startpos);
 extern void DisableSubscriptionAndExit(void);
+extern const char * get_worker_name(void);
 
 #endif							/* WORKER_INTERNAL_H */
