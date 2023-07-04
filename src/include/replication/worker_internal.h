@@ -63,6 +63,9 @@ typedef struct LogicalRepWorker
 	 */
 	bool		is_sync_completed;
 
+	/* Indicates the slot number which corresponds to this LogicalRepWorker. */
+	int			worker_slot;
+
 	/*
 	 * Used to create the changes and subxact files for the streaming
 	 * transactions.  Upon the arrival of the first streaming transaction or
