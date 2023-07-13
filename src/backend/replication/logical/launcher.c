@@ -298,6 +298,38 @@ logicalrep_workers_find(Oid subid, bool only_running)
 }
 
 /*
+ * Return a logical rep worker in ready state
+ */
+LogicalRepWorker *
+logicalrep_worker_find_syncdone(Oid subid, bool only_running)
+{
+	int			i;
+	LogicalRepWorker *res = NULL;
+
+	Assert(LWLockHeldByMe(LogicalRepWorkerLock));
+
+	/* Search for attached worker for a given subscription id. */
+	for (i = 0; i < max_logical_replication_workers; i++)
+	{
+		LogicalRepWorker *w = &LogicalRepCtx->workers[i];
+
+		/* Skip parallel apply workers. */
+		if (isParallelApplyWorker(w))
+			continue;
+
+		if (w->in_use && w->subid == subid &&
+			w->relstate == SUBREL_STATE_SYNCDONE &&
+			(!only_running || w->proc))
+		{
+			res = w;
+			break;
+		}
+	}
+
+	return res;
+}
+
+/*
  * Start new logical replication background worker, if possible.
  *
  * Returns true on success, false on failure.
