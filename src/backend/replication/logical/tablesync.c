@@ -1745,6 +1745,7 @@ TablesyncWorkerMain(Datum main_arg)
 	XLogRecPtr	origin_startpos = InvalidXLogRecPtr;
 	char	   *myslotname = NULL;
 	WalRcvStreamOptions options;
+	TimestampTz start_time;
 
 	/* Attach to slot */
 	logicalrep_worker_attach(worker_slot);
@@ -1786,6 +1787,8 @@ TablesyncWorkerMain(Datum main_arg)
 	 */
 	for (;;)
 	{
+		start_time = GetCurrentTimestamp();
+
 		run_tablesync_worker(&options,
 							 myslotname,
 							 originname,
@@ -1797,10 +1800,17 @@ TablesyncWorkerMain(Datum main_arg)
 
 		finish_sync_worker(true);
 
+		elog(LOG, "Sync done in %lu ms",
+			 TimestampDifferenceMilliseconds(start_time, GetCurrentTimestamp()));
+
 		if (MyLogicalRepWorker->is_sync_completed)
 		{
+			start_time = GetCurrentTimestamp();
 			/* wait for apply worker to assign a new table with INIT state. */
 			wait_for_worker_state_change(SUBREL_STATE_INIT);
+			elog(LOG, "Waited %lu ms for assignment",
+			 TimestampDifferenceMilliseconds(start_time, GetCurrentTimestamp()));
+
 		}
 
 		if (!OidIsValid(MyLogicalRepWorker->relid))
