@@ -119,6 +119,8 @@ static List *sock_paths = NIL;
 #define PQ_SEND_BUFFER_SIZE 8192
 #define PQ_RECV_BUFFER_SIZE 8192
 
+static StringInfo	PqSendString;
+
 static char *PqSendBuffer;
 static int	PqSendBufferSize;	/* Size send buffer */
 static int	PqSendPointer;		/* Next index to store a byte in PqSendBuffer */
@@ -146,6 +148,7 @@ static int	socket_putmessage(char msgtype, const char *s, size_t len);
 static void socket_putmessage_noblock(char msgtype, const char *s, size_t len);
 static int	internal_putbytes(const char *s, size_t len);
 static int	internal_flush(void);
+static void socket_get_send_buffer(StringInfoData **s);
 
 static int	Lock_AF_UNIX(const char *unixSocketDir, const char *unixSocketPath);
 static int	Setup_AF_UNIX(const char *sock_path);
@@ -156,7 +159,8 @@ static const PQcommMethods PqCommSocketMethods = {
 	.flush_if_writable = socket_flush_if_writable,
 	.is_send_pending = socket_is_send_pending,
 	.putmessage = socket_putmessage,
-	.putmessage_noblock = socket_putmessage_noblock
+	.putmessage_noblock = socket_putmessage_noblock,
+	.get_send_buffer = socket_get_send_buffer
 };
 
 const PQcommMethods *PqCommMethods = &PqCommSocketMethods;
@@ -174,12 +178,19 @@ pq_init(void)
 	int			socket_pos PG_USED_FOR_ASSERTS_ONLY;
 	int			latch_pos PG_USED_FOR_ASSERTS_ONLY;
 
+	//pg_usleep(10000000);
+
 	/* initialize state variables */
 	PqSendBufferSize = PQ_SEND_BUFFER_SIZE;
-	PqSendBuffer = MemoryContextAlloc(TopMemoryContext, PqSendBufferSize);
+	PqSendString = (StringInfoData *)MemoryContextAlloc(TopMemoryContext,	sizeof(StringInfoData));
+	PqSendBuffer  = MemoryContextAlloc(TopMemoryContext, PqSendBufferSize);
+	PqSendString->data = (char *)PqSendBuffer;
 	PqSendPointer = PqSendStart = PqRecvPointer = PqRecvLength = 0;
 	PqCommBusy = false;
 	PqCommReadingMsg = false;
+	
+	PqSendString->len = PqSendPointer;
+	PqSendString->maxlen = PqSendBufferSize;
 
 	/* set up process-exit hook to close the socket */
 	on_proc_exit(socket_close, 0);
@@ -1281,6 +1292,12 @@ pq_getmessage(StringInfo s, int maxlen)
 	return 0;
 }
 
+void
+pq_move_sendbuffer_pointer(int i)
+{
+	PqSendPointer += i;
+	PqSendString->len = PqSendPointer;
+}
 
 static int
 internal_putbytes(const char *s, size_t len)
@@ -1299,8 +1316,9 @@ internal_putbytes(const char *s, size_t len)
 		amount = PqSendBufferSize - PqSendPointer;
 		if (amount > len)
 			amount = len;
-		memcpy(PqSendBuffer + PqSendPointer, s, amount);
+		memcpy((char *)PqSendString->data + PqSendPointer, s, amount);
 		PqSendPointer += amount;
+		PqSendString->len = PqSendPointer;
 		s += amount;
 		len -= amount;
 	}
@@ -1340,8 +1358,8 @@ internal_flush(void)
 {
 	static int	last_reported_send_errno = 0;
 
-	char	   *bufptr = PqSendBuffer + PqSendStart;
-	char	   *bufend = PqSendBuffer + PqSendPointer;
+	char	   *bufptr = (char *)PqSendString->data + PqSendStart;
+	char	   *bufend = (char *)PqSendString->data + PqSendPointer;
 
 	while (bufptr < bufend)
 	{
@@ -1388,6 +1406,7 @@ internal_flush(void)
 			 * the connection.
 			 */
 			PqSendStart = PqSendPointer = 0;
+			PqSendString->len = 0;
 			ClientConnectionLost = 1;
 			InterruptPending = 1;
 			return EOF;
@@ -1399,6 +1418,7 @@ internal_flush(void)
 	}
 
 	PqSendStart = PqSendPointer = 0;
+	PqSendString->len = 0;
 	return 0;
 }
 
@@ -1510,7 +1530,7 @@ socket_putmessage_noblock(char msgtype, const char *s, size_t len)
 	required = PqSendPointer + 1 + 4 + len;
 	if (required > PqSendBufferSize)
 	{
-		PqSendBuffer = repalloc(PqSendBuffer, required);
+		PqSendString->data = repalloc((char *)PqSendString->data, required);
 		PqSendBufferSize = required;
 	}
 	res = pq_putmessage(msgtype, s, len);
@@ -1553,6 +1573,12 @@ pq_putmessage_v2(char msgtype, const char *s, size_t len)
 fail:
 	PqCommBusy = false;
 	return EOF;
+}
+
+static void
+socket_get_send_buffer(StringInfoData **s)
+{	
+	*s = PqSendString;
 }
 
 /*

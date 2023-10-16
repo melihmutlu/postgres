@@ -155,7 +155,7 @@ static XLogRecPtr sendTimeLineValidUpto = InvalidXLogRecPtr;
 static XLogRecPtr sentPtr = InvalidXLogRecPtr;
 
 /* Buffers for constructing outgoing messages and processing reply messages. */
-static StringInfoData output_message;
+static StringInfo output_message;
 static StringInfoData reply_message;
 static StringInfoData tmpbuf;
 
@@ -265,6 +265,9 @@ static void WalSndSegmentOpen(XLogReaderState *state, XLogSegNo nextSegNo,
 void
 InitWalSender(void)
 {
+	elog(LOG, "init walsender");
+	//pg_usleep(10000000);
+
 	am_cascading_walsender = RecoveryInProgress();
 
 	/* Create a per-walsender data structure in shared memory */
@@ -1777,9 +1780,13 @@ exec_replication_command(const char *cmd_string)
 	 * Allocate buffers that will be used for each outgoing and incoming
 	 * message.  We do this just once per command to reduce palloc overhead.
 	 */
-	initStringInfo(&output_message);
+	output_message = makeStringInfo();
 	initStringInfo(&reply_message);
 	initStringInfo(&tmpbuf);
+
+	//pg_usleep(10000000);
+
+	pq_get_send_buffer(&output_message);
 
 	switch (cmd_node->type)
 	{
@@ -1893,7 +1900,7 @@ ProcessRepliesIfAny(void)
 	int			maxmsglen;
 	int			r;
 	bool		received = false;
-
+	
 	last_processing = GetCurrentTimestamp();
 
 	/*
@@ -1941,6 +1948,7 @@ ProcessRepliesIfAny(void)
 
 		/* Read the message contents */
 		resetStringInfo(&reply_message);
+		
 		if (pq_getmessage(&reply_message, maxmsglen))
 		{
 			ereport(COMMERROR,
@@ -2750,6 +2758,7 @@ XLogSendPhysical(void)
 	Size		nbytes;
 	XLogSegNo	segno;
 	WALReadError errinfo;
+	uint32		n32;
 
 	/* If requested switch the WAL sender to the stopping state. */
 	if (got_STOPPING)
@@ -2951,22 +2960,24 @@ XLogSendPhysical(void)
 	/*
 	 * OK to read and send the slice.
 	 */
-	resetStringInfo(&output_message);
-	pq_sendbyte(&output_message, 'w');
+	resetStringInfo(output_message);
+	pq_sendbyte(output_message, 'd');
+	pq_sendint32(output_message, 0);	/* will be filled later with length */
 
-	pq_sendint64(&output_message, startptr);	/* dataStart */
-	pq_sendint64(&output_message, SendRqstPtr); /* walEnd */
-	pq_sendint64(&output_message, 0);	/* sendtime, filled in last */
+	pq_sendbyte(output_message, 'w');
+	pq_sendint64(output_message, startptr);	/* dataStart */
+	pq_sendint64(output_message, SendRqstPtr); /* walEnd */
+	pq_sendint64(output_message, 0);	/* sendtime, filled in last */
 
 	/*
 	 * Read the log directly into the output buffer to avoid extra memcpy
 	 * calls.
 	 */
-	enlargeStringInfo(&output_message, nbytes);
+	enlargeStringInfo(output_message, nbytes);
 
 retry:
 	if (!WALRead(xlogreader,
-				 &output_message.data[output_message.len],
+				 output_message->data + output_message->len,
 				 startptr,
 				 nbytes,
 				 xlogreader->seg.ws_tli,	/* Pass the current TLI because
@@ -3003,18 +3014,23 @@ retry:
 		}
 	}
 
-	output_message.len += nbytes;
-	output_message.data[output_message.len] = '\0';
+	output_message->len += nbytes;
+	output_message->data[output_message->len] = '\0';
 
 	/*
 	 * Fill the send timestamp last, so that it is taken as late as possible.
 	 */
 	resetStringInfo(&tmpbuf);
 	pq_sendint64(&tmpbuf, GetCurrentTimestamp());
-	memcpy(&output_message.data[1 + sizeof(int64) + sizeof(int64)],
+	memcpy(output_message->data + 2 + sizeof(int32) + sizeof(int64) + sizeof(int64),
 		   tmpbuf.data, sizeof(int64));
+		
+	n32 = pg_hton32((output_message->len - 1)); /* ?? */
+	memcpy(output_message->data + 1,(char *) &n32, sizeof(int32));
 
-	pq_putmessage_noblock('d', output_message.data, output_message.len);
+	//pq_putmessage_prepared('d', output_message.data, output_message.len);
+	pq_move_sendbuffer_pointer(output_message->len);
+	pq_flush();
 
 	sentPtr = endptr;
 
@@ -3697,14 +3713,14 @@ WalSndKeepalive(bool requestReply, XLogRecPtr writePtr)
 	elog(DEBUG2, "sending replication keepalive");
 
 	/* construct the message... */
-	resetStringInfo(&output_message);
-	pq_sendbyte(&output_message, 'k');
-	pq_sendint64(&output_message, XLogRecPtrIsInvalid(writePtr) ? sentPtr : writePtr);
-	pq_sendint64(&output_message, GetCurrentTimestamp());
-	pq_sendbyte(&output_message, requestReply ? 1 : 0);
+	resetStringInfo(output_message);
+	pq_sendbyte(output_message, 'k');
+	pq_sendint64(output_message, XLogRecPtrIsInvalid(writePtr) ? sentPtr : writePtr);
+	pq_sendint64(output_message, GetCurrentTimestamp());
+	pq_sendbyte(output_message, requestReply ? 1 : 0);
 
 	/* ... and send it wrapped in CopyData */
-	pq_putmessage_noblock('d', output_message.data, output_message.len);
+	pq_putmessage_noblock('d', output_message->data, output_message->len);
 
 	/* Set local flag */
 	if (requestReply)
