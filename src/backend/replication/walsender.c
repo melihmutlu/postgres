@@ -156,7 +156,7 @@ static XLogRecPtr sentPtr = InvalidXLogRecPtr;
 
 /* Buffers for constructing outgoing messages and processing reply messages. */
 static StringInfo output_message;
-static StringInfoData reply_message;
+static StringInfo reply_message;
 static StringInfoData tmpbuf;
 
 /* Timestamp of last ProcessRepliesIfAny(). */
@@ -265,9 +265,6 @@ static void WalSndSegmentOpen(XLogReaderState *state, XLogSegNo nextSegNo,
 void
 InitWalSender(void)
 {
-	elog(LOG, "init walsender");
-	//pg_usleep(10000000);
-
 	am_cascading_walsender = RecoveryInProgress();
 
 	/* Create a per-walsender data structure in shared memory */
@@ -1781,12 +1778,11 @@ exec_replication_command(const char *cmd_string)
 	 * message.  We do this just once per command to reduce palloc overhead.
 	 */
 	output_message = makeStringInfo();
-	initStringInfo(&reply_message);
+	reply_message = makeStringInfo();
 	initStringInfo(&tmpbuf);
 
-	//pg_usleep(10000000);
-
 	pq_get_send_buffer(&output_message);
+	pq_get_recv_buffer(&reply_message);
 
 	switch (cmd_node->type)
 	{
@@ -1898,6 +1894,7 @@ ProcessRepliesIfAny(void)
 {
 	unsigned char firstchar;
 	int			maxmsglen;
+	int			msglen;
 	int			r;
 	bool		received = false;
 	
@@ -1947,13 +1944,12 @@ ProcessRepliesIfAny(void)
 		}
 
 		/* Read the message contents */
-		resetStringInfo(&reply_message);
-		
-		if (pq_getmessage(&reply_message, maxmsglen))
+		msglen = pq_get_msg_length(maxmsglen);
+		if (pq_loadbytes(msglen))
 		{
 			ereport(COMMERROR,
-					(errcode(ERRCODE_PROTOCOL_VIOLATION),
-					 errmsg("unexpected EOF on standby connection")));
+				(errcode(ERRCODE_PROTOCOL_VIOLATION),
+					errmsg("unexpected EOF on standby connection")));
 			proc_exit(0);
 		}
 
@@ -2015,7 +2011,7 @@ ProcessStandbyMessage(void)
 	/*
 	 * Check message type from the first byte.
 	 */
-	msgtype = pq_getmsgbyte(&reply_message);
+	msgtype = pq_getmsgbyte(reply_message);
 
 	switch (msgtype)
 	{
@@ -2087,11 +2083,11 @@ ProcessStandbyReplyMessage(void)
 	static bool fullyAppliedLastTime = false;
 
 	/* the caller already consumed the msgtype byte */
-	writePtr = pq_getmsgint64(&reply_message);
-	flushPtr = pq_getmsgint64(&reply_message);
-	applyPtr = pq_getmsgint64(&reply_message);
-	replyTime = pq_getmsgint64(&reply_message);
-	replyRequested = pq_getmsgbyte(&reply_message);
+	writePtr = pq_getmsgint64(reply_message);
+	flushPtr = pq_getmsgint64(reply_message);
+	applyPtr = pq_getmsgint64(reply_message);
+	replyTime = pq_getmsgint64(reply_message);
+	replyRequested = pq_getmsgbyte(reply_message);
 
 	if (message_level_is_interesting(DEBUG2))
 	{
@@ -2269,11 +2265,11 @@ ProcessStandbyHSFeedbackMessage(void)
 	 * byte. See XLogWalRcvSendHSFeedback() in walreceiver.c for the creation
 	 * of this message.
 	 */
-	replyTime = pq_getmsgint64(&reply_message);
-	feedbackXmin = pq_getmsgint(&reply_message, 4);
-	feedbackEpoch = pq_getmsgint(&reply_message, 4);
-	feedbackCatalogXmin = pq_getmsgint(&reply_message, 4);
-	feedbackCatalogEpoch = pq_getmsgint(&reply_message, 4);
+	replyTime = pq_getmsgint64(reply_message);
+	feedbackXmin = pq_getmsgint(reply_message, 4);
+	feedbackEpoch = pq_getmsgint(reply_message, 4);
+	feedbackCatalogXmin = pq_getmsgint(reply_message, 4);
+	feedbackCatalogEpoch = pq_getmsgint(reply_message, 4);
 
 	if (message_level_is_interesting(DEBUG2))
 	{

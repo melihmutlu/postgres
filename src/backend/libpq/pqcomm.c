@@ -126,9 +126,8 @@ static int	PqSendBufferSize;	/* Size send buffer */
 static int	PqSendPointer;		/* Next index to store a byte in PqSendBuffer */
 static int	PqSendStart;		/* Next index to send a byte in PqSendBuffer */
 
+static StringInfo	PqRecvString;
 static char PqRecvBuffer[PQ_RECV_BUFFER_SIZE];
-static int	PqRecvPointer;		/* Next index to read a byte from PqRecvBuffer */
-static int	PqRecvLength;		/* End of data available in PqRecvBuffer */
 
 /*
  * Message status
@@ -149,6 +148,7 @@ static void socket_putmessage_noblock(char msgtype, const char *s, size_t len);
 static int	internal_putbytes(const char *s, size_t len);
 static int	internal_flush(void);
 static void socket_get_send_buffer(StringInfoData **s);
+static void socket_get_recv_buffer(StringInfoData **s);
 
 static int	Lock_AF_UNIX(const char *unixSocketDir, const char *unixSocketPath);
 static int	Setup_AF_UNIX(const char *sock_path);
@@ -160,7 +160,8 @@ static const PQcommMethods PqCommSocketMethods = {
 	.is_send_pending = socket_is_send_pending,
 	.putmessage = socket_putmessage,
 	.putmessage_noblock = socket_putmessage_noblock,
-	.get_send_buffer = socket_get_send_buffer
+	.get_send_buffer = socket_get_send_buffer,
+	.get_recv_buffer = socket_get_recv_buffer
 };
 
 const PQcommMethods *PqCommMethods = &PqCommSocketMethods;
@@ -178,19 +179,24 @@ pq_init(void)
 	int			socket_pos PG_USED_FOR_ASSERTS_ONLY;
 	int			latch_pos PG_USED_FOR_ASSERTS_ONLY;
 
-	//pg_usleep(10000000);
-
 	/* initialize state variables */
 	PqSendBufferSize = PQ_SEND_BUFFER_SIZE;
 	PqSendString = (StringInfoData *)MemoryContextAlloc(TopMemoryContext,	sizeof(StringInfoData));
 	PqSendBuffer  = MemoryContextAlloc(TopMemoryContext, PqSendBufferSize);
 	PqSendString->data = (char *)PqSendBuffer;
-	PqSendPointer = PqSendStart = PqRecvPointer = PqRecvLength = 0;
+	PqSendPointer = PqSendStart = 0;
+	PqSendString->len = PqSendPointer;
+	PqSendString->maxlen = PqSendBufferSize;
+	
+	PqRecvString = (StringInfoData *)MemoryContextAlloc(TopMemoryContext,	sizeof(StringInfoData));
+	PqRecvString->data = PqRecvBuffer;
+	PqRecvString->len = 0;
+	PqRecvString->maxlen = PQ_RECV_BUFFER_SIZE;
+	PqRecvString->cursor = 0;
+	
 	PqCommBusy = false;
 	PqCommReadingMsg = false;
 	
-	PqSendString->len = PqSendPointer;
-	PqSendString->maxlen = PqSendBufferSize;
 
 	/* set up process-exit hook to close the socket */
 	on_proc_exit(socket_close, 0);
@@ -929,30 +935,30 @@ socket_set_nonblocking(bool nonblocking)
 static int
 pq_recvbuf(void)
 {
-	if (PqRecvPointer > 0)
+	if (PqRecvString->cursor > 0)
 	{
-		if (PqRecvLength > PqRecvPointer)
+		if (PqRecvString->len > PqRecvString->cursor)
 		{
 			/* still some unread data, left-justify it in the buffer */
-			memmove(PqRecvBuffer, PqRecvBuffer + PqRecvPointer,
-					PqRecvLength - PqRecvPointer);
-			PqRecvLength -= PqRecvPointer;
-			PqRecvPointer = 0;
+			memmove(PqRecvBuffer, PqRecvBuffer + PqRecvString->cursor,
+					PqRecvString->len - PqRecvString->cursor);
+			PqRecvString->len -= PqRecvString->cursor;
+			PqRecvString->cursor = 0;
 		}
 		else
-			PqRecvLength = PqRecvPointer = 0;
+			PqRecvString->len = PqRecvString->cursor = 0;
 	}
 
 	/* Ensure that we're in blocking mode */
 	socket_set_nonblocking(false);
 
-	/* Can fill buffer from PqRecvLength and upwards */
+	/* Can fill buffer from PqRecvString->len and upwards */
 	for (;;)
 	{
 		int			r;
 
-		r = secure_read(MyProcPort, PqRecvBuffer + PqRecvLength,
-						PQ_RECV_BUFFER_SIZE - PqRecvLength);
+		r = secure_read(MyProcPort, PqRecvBuffer + PqRecvString->len,
+						PQ_RECV_BUFFER_SIZE - PqRecvString->len);
 
 		if (r < 0)
 		{
@@ -978,7 +984,7 @@ pq_recvbuf(void)
 			return EOF;
 		}
 		/* r contains number of bytes read, so just incr length */
-		PqRecvLength += r;
+		PqRecvString->len += r;
 		return 0;
 	}
 }
@@ -992,12 +998,12 @@ pq_getbyte(void)
 {
 	Assert(PqCommReadingMsg);
 
-	while (PqRecvPointer >= PqRecvLength)
+	while (PqRecvString->cursor >= PqRecvString->len)
 	{
 		if (pq_recvbuf())		/* If nothing in buffer, then recv some */
 			return EOF;			/* Failed to recv data */
 	}
-	return (unsigned char) PqRecvBuffer[PqRecvPointer++];
+	return (unsigned char) PqRecvBuffer[PqRecvString->cursor++];
 }
 
 /* --------------------------------
@@ -1011,12 +1017,12 @@ pq_peekbyte(void)
 {
 	Assert(PqCommReadingMsg);
 
-	while (PqRecvPointer >= PqRecvLength)
+	while (PqRecvString->cursor >= PqRecvString->len)
 	{
 		if (pq_recvbuf())		/* If nothing in buffer, then recv some */
 			return EOF;			/* Failed to recv data */
 	}
-	return (unsigned char) PqRecvBuffer[PqRecvPointer];
+	return (unsigned char) PqRecvBuffer[PqRecvString->cursor];
 }
 
 /* --------------------------------
@@ -1034,9 +1040,9 @@ pq_getbyte_if_available(unsigned char *c)
 
 	Assert(PqCommReadingMsg);
 
-	if (PqRecvPointer < PqRecvLength)
+	if (PqRecvString->cursor < PqRecvString->len)
 	{
-		*c = PqRecvBuffer[PqRecvPointer++];
+		*c = PqRecvBuffer[PqRecvString->cursor++];
 		return 1;
 	}
 
@@ -1090,19 +1096,41 @@ pq_getbytes(char *s, size_t len)
 
 	while (len > 0)
 	{
-		while (PqRecvPointer >= PqRecvLength)
+		while (PqRecvString->cursor >= PqRecvString->len)
 		{
 			if (pq_recvbuf())	/* If nothing in buffer, then recv some */
 				return EOF;		/* Failed to recv data */
 		}
-		amount = PqRecvLength - PqRecvPointer;
+		amount = PqRecvString->len - PqRecvString->cursor;
 		if (amount > len)
 			amount = len;
-		memcpy(s, PqRecvBuffer + PqRecvPointer, amount);
-		PqRecvPointer += amount;
+		memcpy(s, PqRecvBuffer + PqRecvString->cursor, amount);
+		PqRecvString->cursor += amount;
 		s += amount;
 		len -= amount;
 	}
+	return 0;
+}
+
+int
+pq_loadbytes(size_t len)
+{
+	size_t		amount;
+
+	Assert(PqCommReadingMsg);
+
+	while (len > 0)
+	{
+		if (pq_peekbyte() == EOF)
+			return EOF;
+
+		amount = PqRecvString->len - PqRecvString->cursor;
+		if (amount > len)
+			amount = len;
+		len -= amount;
+	}
+
+	PqCommReadingMsg = false;
 	return 0;
 }
 
@@ -1124,15 +1152,15 @@ pq_discardbytes(size_t len)
 
 	while (len > 0)
 	{
-		while (PqRecvPointer >= PqRecvLength)
+		while (PqRecvString->cursor >= PqRecvString->len)
 		{
 			if (pq_recvbuf())	/* If nothing in buffer, then recv some */
 				return EOF;		/* Failed to recv data */
 		}
-		amount = PqRecvLength - PqRecvPointer;
+		amount = PqRecvString->len - PqRecvString->cursor;
 		if (amount > len)
 			amount = len;
-		PqRecvPointer += amount;
+		PqRecvString->cursor += amount;
 		len -= amount;
 	}
 	return 0;
@@ -1147,7 +1175,7 @@ pq_discardbytes(size_t len)
 bool
 pq_buffer_has_data(void)
 {
-	return (PqRecvPointer < PqRecvLength);
+	return (PqRecvString->cursor < PqRecvString->len);
 }
 
 
@@ -1203,6 +1231,37 @@ pq_is_reading_msg(void)
 	return PqCommReadingMsg;
 }
 
+/* 
+ * Read message length word
+ */
+int
+pq_get_msg_length(int maxlen){
+	int len;
+
+	Assert(PqCommReadingMsg);
+
+	if (pq_getbytes((char *) &len, 4) == EOF)
+	{
+		ereport(COMMERROR,
+				(errcode(ERRCODE_PROTOCOL_VIOLATION),
+				 errmsg("unexpected EOF within message length word")));
+		return EOF;
+	}
+
+	len = pg_ntoh32(len);
+
+	if (len < 4 || len > maxlen)
+	{
+		ereport(COMMERROR,
+				(errcode(ERRCODE_PROTOCOL_VIOLATION),
+				 errmsg("invalid message length")));
+		return EOF;
+	}
+
+	len -= 4;					/* discount length itself */
+	return len;
+}
+
 /* --------------------------------
  *		pq_getmessage	- get a message with length word from connection
  *
@@ -1228,26 +1287,7 @@ pq_getmessage(StringInfo s, int maxlen)
 
 	resetStringInfo(s);
 
-	/* Read message length word */
-	if (pq_getbytes((char *) &len, 4) == EOF)
-	{
-		ereport(COMMERROR,
-				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 errmsg("unexpected EOF within message length word")));
-		return EOF;
-	}
-
-	len = pg_ntoh32(len);
-
-	if (len < 4 || len > maxlen)
-	{
-		ereport(COMMERROR,
-				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 errmsg("invalid message length")));
-		return EOF;
-	}
-
-	len -= 4;					/* discount length itself */
+	len = pq_get_msg_length(maxlen);
 
 	if (len > 0)
 	{
@@ -1579,6 +1619,12 @@ static void
 socket_get_send_buffer(StringInfoData **s)
 {	
 	*s = PqSendString;
+}
+
+static void
+socket_get_recv_buffer(StringInfoData **s)
+{	
+	*s = PqRecvString;
 }
 
 /*

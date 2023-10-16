@@ -39,6 +39,7 @@ typedef struct
 	int			(*putmessage) (char msgtype, const char *s, size_t len);
 	void		(*putmessage_noblock) (char msgtype, const char *s, size_t len);
 	void		(*get_send_buffer) (StringInfoData **s);
+	void		(*get_recv_buffer) (StringInfoData **s);
 } PQcommMethods;
 
 extern const PGDLLIMPORT PQcommMethods *PqCommMethods;
@@ -53,6 +54,8 @@ extern const PGDLLIMPORT PQcommMethods *PqCommMethods;
 	(PqCommMethods->putmessage_noblock(msgtype, s, len))
 #define pq_get_send_buffer(s) \
 	(PqCommMethods->get_send_buffer(s))
+#define pq_get_recv_buffer(s) \
+	(PqCommMethods->get_recv_buffer(s))
 
 /*
  * External functions.
@@ -87,6 +90,8 @@ extern bool pq_buffer_has_data(void);
 extern int	pq_putmessage_v2(char msgtype, const char *s, size_t len);
 extern bool pq_check_connection(void);
 extern void pq_move_sendbuffer_pointer(int i);
+extern int	pq_get_msg_length(int maxlen);
+extern int	pq_loadbytes(size_t len);
 /*
  * prototypes for functions in be-secure.c
  */
