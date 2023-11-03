@@ -130,40 +130,6 @@ static bool FetchTableStates(bool *started_tx);
 static StringInfo copybuf = NULL;
 
 /*
- * Exit routine for synchronization worker.
- */
-static void
-pg_attribute_noreturn()
-finish_sync_worker(void)
-{
-	/*
-	 * Commit any outstanding transaction. This is the usual case, unless
-	 * there was nothing to do for the table.
-	 */
-	if (IsTransactionState())
-	{
-		CommitTransactionCommand();
-		pgstat_report_stat(true);
-	}
-
-	/* And flush all writes. */
-	XLogFlush(GetXLogWriteRecPtr());
-
-	StartTransactionCommand();
-	ereport(LOG,
-			(errmsg("logical replication table synchronization worker for subscription \"%s\", table \"%s\" has finished",
-					MySubscription->name,
-					get_rel_name(MyLogicalRepWorker->relid))));
-	CommitTransactionCommand();
-
-	/* Find the leader apply worker and signal it. */
-	logicalrep_worker_wakeup(MyLogicalRepWorker->subid, InvalidOid);
-
-	/* Stop gracefully */
-	proc_exit(0);
-}
-
-/*
  * Wait until the relation sync state is set in the catalog to the expected
  * one; return true when it happens.
  *
@@ -265,6 +231,48 @@ wait_for_worker_state_change(char expected_state)
 	}
 
 	return false;
+}
+
+/*
+ * Exit routine for synchronization worker.
+ */
+static void
+finish_sync_worker(bool reuse_worker)
+{
+	/*
+	 * Commit any outstanding transaction. This is the usual case, unless
+	 * there was nothing to do for the table.
+	 */
+	if (IsTransactionState())
+	{
+		CommitTransactionCommand();
+		pgstat_report_stat(true);
+	}
+
+	/* And flush all writes. */
+	XLogFlush(GetXLogWriteRecPtr());
+
+	StartTransactionCommand();
+	ereport(LOG,
+			(errmsg("logical replication table synchronization worker for subscription \"%s\", table \"%s\" has finished",
+					MySubscription->name,
+					get_rel_name(MyLogicalRepWorker->relid))));
+	CommitTransactionCommand();
+
+	SpinLockAcquire(&MyLogicalRepWorker->relmutex);
+	MyLogicalRepWorker->relstate = SUBREL_STATE_UNKNOWN;
+	MyLogicalRepWorker->relid = InvalidOid;
+	MyLogicalRepWorker->relstate_lsn = InvalidXLogRecPtr;
+	SpinLockRelease(&MyLogicalRepWorker->relmutex);
+
+	if (reuse_worker)
+		wait_for_worker_state_change(SUBREL_STATE_INIT);
+	else
+	{
+		/* Find the leader apply worker and signal it. */
+		logicalrep_worker_wakeup(MyLogicalRepWorker->subid, InvalidOid);
+		proc_exit(0);
+	}
 }
 
 /*
@@ -380,7 +388,9 @@ process_syncing_tables_for_sync(XLogRecPtr current_lsn)
 		 */
 		replorigin_drop_by_name(originname, true, false);
 
-		finish_sync_worker();
+		SpinLockAcquire(&MyLogicalRepWorker->relmutex);
+		MyLogicalRepWorker->relsync_completed = true;
+		SpinLockRelease(&MyLogicalRepWorker->relmutex);
 	}
 	else
 		SpinLockRelease(&MyLogicalRepWorker->relmutex);
@@ -456,6 +466,7 @@ process_syncing_tables_for_apply(XLogRecPtr current_lsn)
 	foreach(lc, table_states_not_ready)
 	{
 		SubscriptionRelState *rstate = (SubscriptionRelState *) lfirst(lc);
+		LogicalRepWorker *syncworker;
 
 		if (rstate->state == SUBREL_STATE_SYNCDONE)
 		{
@@ -499,12 +510,26 @@ process_syncing_tables_for_apply(XLogRecPtr current_lsn)
 				UpdateSubscriptionRelState(MyLogicalRepWorker->subid,
 										   rstate->relid, rstate->state,
 										   rstate->lsn);
+
+				LWLockAcquire(LogicalRepWorkerLock, LW_SHARED);
+
+				syncworker = logicalrep_worker_find(MyLogicalRepWorker->subid,
+													rstate->relid, false);
+
+				if (syncworker)
+				{
+					SpinLockAcquire(&syncworker->relmutex);
+					syncworker->relstate = SUBREL_STATE_UNKNOWN;
+					syncworker->relid = InvalidOid;
+					syncworker->relstate_lsn = InvalidXLogRecPtr;
+					SpinLockRelease(&syncworker->relmutex);
+				}
+
+				LWLockRelease(LogicalRepWorkerLock);
 			}
 		}
 		else
 		{
-			LogicalRepWorker *syncworker;
-
 			/*
 			 * Look for a sync worker for this relation.
 			 */
@@ -567,34 +592,56 @@ process_syncing_tables_for_apply(XLogRecPtr current_lsn)
 				int			nsyncworkers =
 					logicalrep_sync_worker_count(MyLogicalRepWorker->subid);
 
+				if (nsyncworkers == max_sync_workers_per_subscription)
+				{
+					syncworker = logicalrep_idle_worker_find(MyLogicalRepWorker->subid, true);
+				}
+
+				if (syncworker)
+				{
+					/* Found one, update our copy of its state */
+					SpinLockAcquire(&syncworker->relmutex);
+					syncworker->relstate = SUBREL_STATE_INIT;
+					syncworker->relid = rstate->relid;
+					syncworker->relstate_lsn = rstate->lsn;
+					SpinLockRelease(&syncworker->relmutex);
+
+					/* Signal the sync worker, as it may be waiting for us. */
+					if (syncworker->proc)
+						logicalrep_worker_wakeup_ptr(syncworker);
+				}
+
 				/* Now safe to release the LWLock */
 				LWLockRelease(LogicalRepWorkerLock);
 
-				/*
-				 * If there are free sync worker slot(s), start a new sync
-				 * worker for the table.
-				 */
-				if (nsyncworkers < max_sync_workers_per_subscription)
+				if (!syncworker)
 				{
-					TimestampTz now = GetCurrentTimestamp();
-					struct tablesync_start_time_mapping *hentry;
-					bool		found;
-
-					hentry = hash_search(last_start_times, &rstate->relid,
-										 HASH_ENTER, &found);
-
-					if (!found ||
-						TimestampDifferenceExceeds(hentry->last_start_time, now,
-												   wal_retrieve_retry_interval))
+					/*
+					* If there are free sync worker slot(s), start a new sync
+					* worker for the table.
+					*/
+					if (nsyncworkers < max_sync_workers_per_subscription)
 					{
-						logicalrep_worker_launch(WORKERTYPE_TABLESYNC,
-												 MyLogicalRepWorker->dbid,
-												 MySubscription->oid,
-												 MySubscription->name,
-												 MyLogicalRepWorker->userid,
-												 rstate->relid,
-												 DSM_HANDLE_INVALID);
-						hentry->last_start_time = now;
+						TimestampTz now = GetCurrentTimestamp();
+						struct tablesync_start_time_mapping *hentry;
+						bool		found;
+
+						hentry = hash_search(last_start_times, &rstate->relid,
+											HASH_ENTER, &found);
+
+						if (!found ||
+							TimestampDifferenceExceeds(hentry->last_start_time, now,
+													wal_retrieve_retry_interval))
+						{
+							logicalrep_worker_launch(WORKERTYPE_TABLESYNC,
+													MyLogicalRepWorker->dbid,
+													MySubscription->oid,
+													MySubscription->name,
+													MyLogicalRepWorker->userid,
+													rstate->relid,
+													DSM_HANDLE_INVALID);
+							hentry->last_start_time = now;
+						}
 					}
 				}
 			}
@@ -1247,6 +1294,27 @@ ReplicationSlotNameForTablesync(Oid suboid, Oid relid,
 }
 
 /*
+ * Determine the application_name for tablesync workers.
+ *
+ * Previously, the replication slot name was used as application_name. Since
+ * it's possible to reuse tablesync workers now, a tablesync worker can handle
+ * several different replication slots during its lifetime. Therefore, we
+ * cannot use the slot name as application_name anymore. Instead, the slot
+ * number of the tablesync worker is used as a part of the application_name.
+ *
+ * XXX: if the tablesync worker starts to reuse the replication slot during
+ * synchronization, we should again use the replication slot name as
+ * application_name.
+ */
+static void
+ApplicationNameForTablesync(Oid suboid, int worker_slot,
+							char *application_name, Size szapp)
+{
+	snprintf(application_name, szapp, "pg_%u_sync_%i_" UINT64_FORMAT, suboid,
+			 worker_slot, GetSystemIdentifier());
+}
+
+/*
  * Start syncing the table in the sync worker.
  *
  * If nothing needs to be done to sync the table, we exit the worker without
@@ -1295,7 +1363,7 @@ LogicalRepSyncTableStart(XLogRecPtr *origin_startpos)
 		case SUBREL_STATE_SYNCDONE:
 		case SUBREL_STATE_READY:
 		case SUBREL_STATE_UNKNOWN:
-			finish_sync_worker();	/* doesn't return */
+			finish_sync_worker(false);	/* doesn't return */
 	}
 
 	/* Calculate the name of the tablesync slot. */
@@ -1305,15 +1373,26 @@ LogicalRepSyncTableStart(XLogRecPtr *origin_startpos)
 									slotname,
 									NAMEDATALEN);
 
-	/*
-	 * Here we use the slot name instead of the subscription name as the
-	 * application_name, so that it is different from the leader apply worker,
-	 * so that synchronous replication can distinguish them.
-	 */
-	LogRepWorkerWalRcvConn =
-		walrcv_connect(MySubscription->conninfo, true,
-					   must_use_password,
-					   slotname, &err);
+	/* Connect to the publisher if haven't done so already. */
+	if (LogRepWorkerWalRcvConn == NULL)
+	{
+		char application_name[NAMEDATALEN];
+
+		/*
+		 * The application_name must differ from the subscription name (used by
+		 * the leader apply worker) because synchronous replication has to be
+		 * able to distinguish this worker from the leader apply worker.
+		 */
+		ApplicationNameForTablesync(MySubscription->oid,
+									MyLogicalRepWorker->slot_number,
+									application_name,
+									NAMEDATALEN);
+		LogRepWorkerWalRcvConn =
+			walrcv_connect(MySubscription->conninfo, true,
+						   must_use_password,
+						   application_name, &err);
+	}
+
 	if (LogRepWorkerWalRcvConn == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_CONNECTION_FAILURE),
@@ -1678,9 +1757,12 @@ TablesyncWorkerMain(Datum main_arg)
 
 	SetupApplyOrSyncWorker(worker_slot);
 
-	run_tablesync_worker();
+	while (true)
+	{
+		run_tablesync_worker();
 
-	finish_sync_worker();
+		finish_sync_worker(true);
+	}
 }
 
 /*

@@ -3503,20 +3503,22 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 	ErrorContextCallback errcallback;
 
 	/*
-	 * Init the ApplyMessageContext which we clean up after each replication
-	 * protocol message.
+	 * Init the ApplyMessageContext if needed. This context is cleaned up
+	 * after each replication protocol message.
 	 */
-	ApplyMessageContext = AllocSetContextCreate(ApplyContext,
-												"ApplyMessageContext",
-												ALLOCSET_DEFAULT_SIZES);
+	if (!ApplyMessageContext)
+		ApplyMessageContext = AllocSetContextCreate(ApplyContext,
+													"ApplyMessageContext",
+													ALLOCSET_DEFAULT_SIZES);
 
 	/*
 	 * This memory context is used for per-stream data when the streaming mode
 	 * is enabled. This context is reset on each stream stop.
 	 */
-	LogicalStreamingContext = AllocSetContextCreate(ApplyContext,
-													"LogicalStreamingContext",
-													ALLOCSET_DEFAULT_SIZES);
+	if (!LogicalStreamingContext)
+		LogicalStreamingContext = AllocSetContextCreate(ApplyContext,
+														"LogicalStreamingContext",
+														ALLOCSET_DEFAULT_SIZES);
 
 	/* mark as idle, before starting to loop */
 	pgstat_report_activity(STATE_IDLE, NULL);
@@ -3627,6 +3629,21 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 					MemoryContextReset(ApplyMessageContext);
 				}
 
+			if (am_tablesync_worker())
+			{
+				/*
+				 * If relsync_completed is true, this means that the tablesync
+				 * worker is done with synchronization. Streaming has already been
+				 * ended by process_syncing_tables_for_sync. We should move to the
+				 * next table if needed, or exit.
+				 */
+				if (MyLogicalRepWorker->relsync_completed)
+				{
+					endofstream = true;
+					break;
+				}
+			}
+
 				len = walrcv_receive(LogRepWorkerWalRcvConn, &buf, &fd);
 			}
 		}
@@ -3646,6 +3663,18 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 
 			/* Process any table synchronization changes. */
 			process_syncing_tables(last_received);
+
+			if (am_tablesync_worker())
+			{
+				/*
+				 * If relsync_completed is true, this means that the tablesync
+				 * worker is done with synchronization. Streaming has already been
+				 * ended by process_syncing_tables_for_sync. We should move to the
+				 * next table if needed, or exit.
+				 */
+				if (MyLogicalRepWorker->relsync_completed)
+					endofstream = true;
+			}
 		}
 
 		/* Cleanup the memory. */
@@ -3749,7 +3778,8 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 	apply_error_context_stack = error_context_stack;
 
 	/* All done */
-	walrcv_endstreaming(LogRepWorkerWalRcvConn, &tli);
+	if (!MyLogicalRepWorker->relsync_completed)
+		walrcv_endstreaming(LogRepWorkerWalRcvConn, &tli);
 }
 
 /*

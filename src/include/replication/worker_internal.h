@@ -50,6 +50,9 @@ typedef struct LogicalRepWorker
 	/* Increased every time the slot is taken by new worker. */
 	uint16		generation;
 
+	/* Slot number of this worker. */
+	int			slot_number;
+
 	/* Pointer to proc array. NULL if not running. */
 	PGPROC	   *proc;
 
@@ -67,7 +70,8 @@ typedef struct LogicalRepWorker
 	char		relstate;
 	XLogRecPtr	relstate_lsn;
 	slock_t		relmutex;
-
+	bool		relsync_completed; /* has tablesync finished syncing
+									* the assigned table? */
 	/*
 	 * Used to create the changes and subxact files for the streaming
 	 * transactions.  Upon the arrival of the first streaming transaction or
@@ -243,6 +247,7 @@ extern void logicalrep_worker_attach(int slot);
 extern LogicalRepWorker *logicalrep_worker_find(Oid subid, Oid relid,
 												bool only_running);
 extern List *logicalrep_workers_find(Oid subid, bool only_running);
+extern LogicalRepWorker *logicalrep_idle_worker_find(Oid subid, bool only_running);
 extern bool logicalrep_worker_launch(LogicalRepWorkerType wtype,
 									 Oid dbid, Oid subid, const char *subname,
 									 Oid userid, Oid relid,

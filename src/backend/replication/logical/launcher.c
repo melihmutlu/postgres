@@ -297,6 +297,34 @@ logicalrep_workers_find(Oid subid, bool only_running)
 	return res;
 }
 
+LogicalRepWorker *
+logicalrep_idle_worker_find(Oid subid, bool only_running)
+{
+	int			i;
+	LogicalRepWorker *res = NULL;
+
+	Assert(LWLockHeldByMe(LogicalRepWorkerLock));
+
+	/* Search for attached worker for a given subscription id. */
+	for (i = 0; i < max_logical_replication_workers; i++)
+	{
+		LogicalRepWorker *w = &LogicalRepCtx->workers[i];
+
+		/* Skip parallel apply workers. */
+		if (!isTablesyncWorker(w))
+			continue;
+
+		if (w->in_use && w->subid == subid && w->relid == InvalidOid &&
+		 	(!only_running || w->proc))
+		{
+			res = w;
+			break;
+		}
+	}
+
+	return res;
+}
+
 /*
  * Start new logical replication background worker, if possible.
  *
@@ -450,6 +478,8 @@ retry:
 	worker->stream_fileset = NULL;
 	worker->leader_pid = is_parallel_apply_worker ? MyProcPid : InvalidPid;
 	worker->parallel_apply = is_parallel_apply_worker;
+	worker->relsync_completed = false;
+	worker->slot_number = slot;
 	worker->last_lsn = InvalidXLogRecPtr;
 	TIMESTAMP_NOBEGIN(worker->last_send_time);
 	TIMESTAMP_NOBEGIN(worker->last_recv_time);

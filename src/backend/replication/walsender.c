@@ -1808,6 +1808,12 @@ exec_replication_command(const char *cmd_string)
 		case T_CreateReplicationSlotCmd:
 			cmdtag = "CREATE_REPLICATION_SLOT";
 			set_ps_display(cmdtag);
+			
+			/*
+			 * Reset flags because reusing tablesync workers can mean
+			 * this is the second time here.
+			 */
+			streamingDoneSending = streamingDoneReceiving = false;
 			CreateReplicationSlot((CreateReplicationSlotCmd *) cmd_node);
 			EndReplicationCommand(cmdtag);
 			break;
