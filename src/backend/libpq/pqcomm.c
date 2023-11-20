@@ -146,6 +146,7 @@ static int	socket_putmessage(char msgtype, const char *s, size_t len);
 static void socket_putmessage_noblock(char msgtype, const char *s, size_t len);
 static int	internal_putbytes(const char *s, size_t len);
 static int	internal_flush(void);
+static int	internal_flush_buffer(const char *s, int *start, int *end);
 
 static int	Lock_AF_UNIX(const char *unixSocketDir, const char *unixSocketPath);
 static int	Setup_AF_UNIX(const char *sock_path);
@@ -1291,25 +1292,13 @@ pq_getmessage(StringInfo s, int maxlen)
 static int
 internal_putbytes(const char *s, size_t len)
 {
-	size_t		amount;
+	int start = 0;
+	int end = len;
 
-	while (len > 0)
-	{
-		/* If buffer is full, then flush it out */
-		if (PqSendPointer >= PqSendBufferSize)
-		{
-			socket_set_nonblocking(false);
-			if (internal_flush())
-				return EOF;
-		}
-		amount = PqSendBufferSize - PqSendPointer;
-		if (amount > len)
-			amount = len;
-		memcpy(PqSendBuffer + PqSendPointer, s, amount);
-		PqSendPointer += amount;
-		s += amount;
-		len -= amount;
-	}
+	socket_set_nonblocking(false);
+	if (internal_flush_buffer(s, &start, &end))
+		return EOF;
+
 	return 0;
 }
 
@@ -1344,10 +1333,24 @@ socket_flush(void)
 static int
 internal_flush(void)
 {
+	/* flush the pending output from send buffer. */
+	return internal_flush_buffer(PqSendBuffer, &PqSendStart, &PqSendPointer);
+}
+
+/* --------------------------------
+ *		internal_flush_buffer - flush the given buffer content
+ *
+ * Returns 0 if OK (meaning everything was sent, or operation would block
+ * and the socket is in non-blocking mode), or EOF if trouble.
+ * --------------------------------
+ */
+static int
+internal_flush_buffer(const char *s, int *start, int *end)
+{
 	static int	last_reported_send_errno = 0;
 
-	char	   *bufptr = PqSendBuffer + PqSendStart;
-	char	   *bufend = PqSendBuffer + PqSendPointer;
+	char	   *bufptr = (char*) s + *start;
+	char	   *bufend = (char*) s + *end;
 
 	while (bufptr < bufend)
 	{
@@ -1393,7 +1396,7 @@ internal_flush(void)
 			 * flag that'll cause the next CHECK_FOR_INTERRUPTS to terminate
 			 * the connection.
 			 */
-			PqSendStart = PqSendPointer = 0;
+			*start = *end = 0;
 			ClientConnectionLost = 1;
 			InterruptPending = 1;
 			return EOF;
@@ -1401,10 +1404,10 @@ internal_flush(void)
 
 		last_reported_send_errno = 0;	/* reset after any successful send */
 		bufptr += r;
-		PqSendStart += r;
+		*start += r;
 	}
 
-	PqSendStart = PqSendPointer = 0;
+	*start = *end = 0;
 	return 0;
 }
 
