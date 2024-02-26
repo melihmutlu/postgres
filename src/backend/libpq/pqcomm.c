@@ -116,7 +116,7 @@ static List *sock_paths = NIL;
  * enlarged by pq_putmessage_noblock() if the message doesn't fit otherwise.
  */
 
-#define PQ_SEND_BUFFER_SIZE 8192
+int PQ_SEND_BUFFER_SIZE = 8192;
 #define PQ_RECV_BUFFER_SIZE 8192
 
 static char *PqSendBuffer;

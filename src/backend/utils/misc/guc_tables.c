@@ -3595,6 +3595,17 @@ struct config_int ConfigureNamesInt[] =
 		NULL, NULL, NULL
 	},
 
+	{
+		{"pq_send_buffer_size", PGC_USERSET, DEVELOPER_OPTIONS,
+			gettext_noop("Sets the PqSendBufferSize"),
+			NULL,
+			GUC_NOT_IN_SAMPLE | GUC_UNIT_BYTE
+		},
+		&PQ_SEND_BUFFER_SIZE,
+		8192, 0, MAX_KILOBYTES,
+		NULL, NULL, NULL
+	},
+
 	/* End-of-list marker */
 	{
 		{NULL, 0, 0, NULL, NULL}, NULL, 0, 0, 0, NULL, NULL, NULL

@@ -123,6 +123,7 @@ extern PGDLLIMPORT char *SSLECDHCurve;
 extern PGDLLIMPORT bool SSLPreferServerCiphers;
 extern PGDLLIMPORT int ssl_min_protocol_version;
 extern PGDLLIMPORT int ssl_max_protocol_version;
+extern PGDLLIMPORT int PQ_SEND_BUFFER_SIZE;
 
 enum ssl_protocol_versions
 {
