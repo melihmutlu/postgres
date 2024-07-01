@@ -19,6 +19,7 @@
 #include "mb/pg_wchar.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
+#include "utils/array.h"
 #include "utils/builtins.h"
 
 /* ----------
@@ -27,6 +28,8 @@
  */
 #define MEMORY_CONTEXT_IDENT_DISPLAY_SIZE	1024
 
+static Datum convert_ids_to_datum(List *path);
+
 /*
  * PutMemoryContextsStatsTupleStore
  *		One recursion level for pg_get_backend_memory_contexts.
@@ -34,9 +37,10 @@
 static void
 PutMemoryContextsStatsTupleStore(Tuplestorestate *tupstore,
 								 TupleDesc tupdesc, MemoryContext context,
-								 const char *parent, int level)
+								 const char *parent, int level, int *context_id,
+								 List *context_ids)
 {
-#define PG_GET_BACKEND_MEMORY_CONTEXTS_COLS	10
+#define PG_GET_BACKEND_MEMORY_CONTEXTS_COLS	11
 
 	Datum		values[PG_GET_BACKEND_MEMORY_CONTEXTS_COLS];
 	bool		nulls[PG_GET_BACKEND_MEMORY_CONTEXTS_COLS];
@@ -45,6 +49,7 @@ PutMemoryContextsStatsTupleStore(Tuplestorestate *tupstore,
 	const char *name;
 	const char *ident;
 	const char *type;
+	int  current_context_id = (*context_id)++;
 
 	Assert(MemoryContextIsValid(context));
 
@@ -118,18 +123,25 @@ PutMemoryContextsStatsTupleStore(Tuplestorestate *tupstore,
 
 	values[3] = CStringGetTextDatum(type);
 	values[4] = Int32GetDatum(level);
-	values[5] = Int64GetDatum(stat.totalspace);
-	values[6] = Int64GetDatum(stat.nblocks);
-	values[7] = Int64GetDatum(stat.freespace);
-	values[8] = Int64GetDatum(stat.freechunks);
-	values[9] = Int64GetDatum(stat.totalspace - stat.freespace);
-	tuplestore_putvalues(tupstore, tupdesc, values, nulls);
+
+	context_ids = lappend_int(context_ids, current_context_id);
+	values[5] = convert_ids_to_datum(context_ids);
 
 	for (child = context->firstchild; child != NULL; child = child->nextchild)
 	{
-		PutMemoryContextsStatsTupleStore(tupstore, tupdesc,
-										 child, name, level + 1);
+		PutMemoryContextsStatsTupleStore(tupstore, tupdesc, child, name,
+										 level+1, context_id, context_ids);
 	}
+	context_ids = list_delete_last(context_ids);
+
+	values[6] = Int64GetDatum(stat.totalspace);
+	values[7] = Int64GetDatum(stat.nblocks);
+	values[8] = Int64GetDatum(stat.freespace);
+	values[9] = Int64GetDatum(stat.freechunks);
+	values[10] = Int64GetDatum(stat.totalspace - stat.freespace);
+
+
+	tuplestore_putvalues(tupstore, tupdesc, values, nulls);
 }
 
 /*
@@ -140,10 +152,13 @@ Datum
 pg_get_backend_memory_contexts(PG_FUNCTION_ARGS)
 {
 	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
+	int context_id = 0;
+	List *context_ids = NIL;
 
 	InitMaterializedSRF(fcinfo, 0);
 	PutMemoryContextsStatsTupleStore(rsinfo->setResult, rsinfo->setDesc,
-									 TopMemoryContext, NULL, 0);
+									 TopMemoryContext, NULL, 0, &context_id,
+									 context_ids);
 
 	return (Datum) 0;
 }
@@ -205,4 +220,27 @@ pg_log_backend_memory_contexts(PG_FUNCTION_ARGS)
 	}
 
 	PG_RETURN_BOOL(true);
+}
+
+/*
+ * Convert a list of context ids to a int[] Datum
+ */
+static Datum
+convert_ids_to_datum(List *context_ids)
+{
+	Datum	   *datum_array;
+	int			length;
+	ArrayType  *result_array;
+	int			pos;
+
+	length = list_length(context_ids);
+	datum_array = (Datum *) palloc(length * sizeof(Datum));
+	pos = length;
+	foreach_int(id, context_ids)
+	{
+		datum_array[--pos] = Int32GetDatum(id);
+	}
+	result_array = construct_array_builtin(datum_array, length, INT4OID);
+
+	return PointerGetDatum(result_array);
 }

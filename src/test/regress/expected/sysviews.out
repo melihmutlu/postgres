@@ -51,6 +51,20 @@ from pg_backend_memory_contexts where name = 'Caller tuples';
 (1 row)
 
 rollback;
+-- Test whether there are contexts with CacheMemoryContext in their path.
+-- There should be multiple children of CacheMemoryContext.
+with contexts as (
+  select * from pg_backend_memory_contexts
+)
+select count(*) > 1
+from contexts c1, contexts c2
+where c1.name = 'CacheMemoryContext'
+  and c1.context_ids[1] = c2.context_ids[c2.level-c1.level+1];
+ ?column? 
+----------
+ t
+(1 row)
+
 -- At introduction, pg_config had 23 entries; it may grow
 select count(*) > 20 as ok from pg_config;
  ok 
