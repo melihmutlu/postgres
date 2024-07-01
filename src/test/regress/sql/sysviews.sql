@@ -42,6 +42,16 @@ from contexts c1, contexts c2
 where c1.name = 'CacheMemoryContext'
   and c1.context_ids[1] = c2.context_ids[c2.level-c1.level+1];
 
+-- Test whether total_bytes_including_children really sums up to the total
+-- bytes used by all child contexts of CacheMemoryContext.
+with contexts as (
+  select * from pg_backend_memory_contexts
+)
+select min(c1.total_bytes_including_children) = sum(c2.total_bytes)
+from contexts c1, contexts c2
+where c1.name = 'CacheMemoryContext'
+  and c1.context_ids[1] = c2.context_ids[c2.level-c1.level+1];
+
 -- At introduction, pg_config had 23 entries; it may grow
 select count(*) > 20 as ok from pg_config;
 

@@ -38,9 +38,10 @@ static void
 PutMemoryContextsStatsTupleStore(Tuplestorestate *tupstore,
 								 TupleDesc tupdesc, MemoryContext context,
 								 const char *parent, int level, int *context_id,
-								 List *context_ids)
+								 List *context_ids,
+								 Size *total_bytes_inc_children)
 {
-#define PG_GET_BACKEND_MEMORY_CONTEXTS_COLS	11
+#define PG_GET_BACKEND_MEMORY_CONTEXTS_COLS	12
 
 	Datum		values[PG_GET_BACKEND_MEMORY_CONTEXTS_COLS];
 	bool		nulls[PG_GET_BACKEND_MEMORY_CONTEXTS_COLS];
@@ -50,6 +51,7 @@ PutMemoryContextsStatsTupleStore(Tuplestorestate *tupstore,
 	const char *ident;
 	const char *type;
 	int  current_context_id = (*context_id)++;
+	Size total_bytes_children = 0;
 
 	Assert(MemoryContextIsValid(context));
 
@@ -127,21 +129,25 @@ PutMemoryContextsStatsTupleStore(Tuplestorestate *tupstore,
 	context_ids = lappend_int(context_ids, current_context_id);
 	values[5] = convert_ids_to_datum(context_ids);
 
+	total_bytes_children += stat.totalspace;
 	for (child = context->firstchild; child != NULL; child = child->nextchild)
 	{
 		PutMemoryContextsStatsTupleStore(tupstore, tupdesc, child, name,
-										 level+1, context_id, context_ids);
+										 level+1, context_id, context_ids,
+										 &total_bytes_children);
 	}
 	context_ids = list_delete_last(context_ids);
 
 	values[6] = Int64GetDatum(stat.totalspace);
-	values[7] = Int64GetDatum(stat.nblocks);
-	values[8] = Int64GetDatum(stat.freespace);
-	values[9] = Int64GetDatum(stat.freechunks);
-	values[10] = Int64GetDatum(stat.totalspace - stat.freespace);
-
+	values[7] = Int64GetDatum(total_bytes_children);
+	values[8] = Int64GetDatum(stat.nblocks);
+	values[9] = Int64GetDatum(stat.freespace);
+	values[10] = Int64GetDatum(stat.freechunks);
+	values[11] = Int64GetDatum(stat.totalspace - stat.freespace);
 
 	tuplestore_putvalues(tupstore, tupdesc, values, nulls);
+
+	*total_bytes_inc_children += total_bytes_children;
 }
 
 /*
@@ -154,11 +160,12 @@ pg_get_backend_memory_contexts(PG_FUNCTION_ARGS)
 	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
 	int context_id = 0;
 	List *context_ids = NIL;
+	Size total_bytes_inc_children = 0;
 
 	InitMaterializedSRF(fcinfo, 0);
 	PutMemoryContextsStatsTupleStore(rsinfo->setResult, rsinfo->setDesc,
 									 TopMemoryContext, NULL, 0, &context_id,
-									 context_ids);
+									 context_ids, &total_bytes_inc_children);
 
 	return (Datum) 0;
 }
