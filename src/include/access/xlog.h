@@ -269,6 +269,10 @@ extern void SetInstallXLogFileSegmentActive(void);
 extern bool IsInstallXLogFileSegmentActive(void);
 extern void XLogShutdownWalRcv(void);
 
+extern int InsertXLogToWalBuffers(char *buf, Size len,
+										XLogRecPtr recptr, TimeLineID tli);
+extern void InitializeXLogForStandby(XLogRecPtr startptr, TimeLineID tli);
+
 /*
  * Routines to start, stop, and get status of a base backup.
  */

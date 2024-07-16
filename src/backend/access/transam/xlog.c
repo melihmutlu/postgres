@@ -2989,8 +2989,8 @@ XLogBackgroundFlush(void)
 	int			flushblocks;
 	TimeLineID	insertTLI;
 
-	/* XLOG doesn't need flushing during recovery */
-	if (RecoveryInProgress())
+	/* XLOG doesn't need flushing during recovery unless it's standby in a streaming replication setup */
+	if (RecoveryInProgress() && !WalRcvStreaming())
 		return false;
 
 	/*
@@ -3004,9 +3004,11 @@ XLogBackgroundFlush(void)
 	WriteRqst = XLogCtl->LogwrtRqst;
 	SpinLockRelease(&XLogCtl->info_lck);
 
+	flexible = !WalRcvStreaming() ? false : true; 
+
 	/* back off to last completed page boundary */
 	WriteRqst.Write -= WriteRqst.Write % XLOG_BLCKSZ;
-
+	
 	/* if we have already flushed that far, consider async commit records */
 	RefreshXLogWriteResult(LogwrtResult);
 	if (WriteRqst.Write <= LogwrtResult.Flush)
@@ -6375,8 +6377,9 @@ XLogInsertAllowed(void)
 
 	/*
 	 * Else, must check to see if we're still in recovery.
+	 * Note that we allow walreceiver to insert WAL.
 	 */
-	if (RecoveryInProgress())
+	if (RecoveryInProgress() && !WalRcvStreaming())
 		return false;
 
 	/*
@@ -6470,12 +6473,13 @@ GetInsertRecPtr(void)
 /*
  * GetFlushRecPtr -- Returns the current flush position, ie, the last WAL
  * position known to be fsync'd to disk. This should only be used on a
- * system that is known not to be in recovery.
+ * system that is known not to be in recovery unless it's streaming replication.
  */
 XLogRecPtr
 GetFlushRecPtr(TimeLineID *insertTLI)
 {
-	Assert(XLogCtl->SharedRecoveryState == RECOVERY_STATE_DONE);
+	Assert(XLogCtl->SharedRecoveryState == RECOVERY_STATE_DONE ||
+		   WalRcvStreaming());
 
 	RefreshXLogWriteResult(LogwrtResult);
 
@@ -6496,7 +6500,8 @@ GetFlushRecPtr(TimeLineID *insertTLI)
 TimeLineID
 GetWALInsertionTimeLine(void)
 {
-	Assert(XLogCtl->SharedRecoveryState == RECOVERY_STATE_DONE);
+	Assert(XLogCtl->SharedRecoveryState == RECOVERY_STATE_DONE ||
+		   WalRcvStreaming());
 
 	/* Since the value can't be changing, no lock is required. */
 	return XLogCtl->InsertTimeLineID;
@@ -9479,4 +9484,93 @@ SetWalWriterSleeping(bool sleeping)
 	SpinLockAcquire(&XLogCtl->info_lck);
 	XLogCtl->WalWriterSleeping = sleeping;
 	SpinLockRelease(&XLogCtl->info_lck);
+}
+
+/*
+ * Set WAL insert, write, flush pointers and timeline ID.
+ * This is called by walreceiver to let xlog infrastructure know from which
+ * point it should start generating WAL
+ * 
+ * Assume that all WALs before the given point have already been written, flushed,
+ * and applied on standby server.
+ */
+void
+InitializeXLogForStandby(XLogRecPtr startptr, TimeLineID tli)
+{
+	pg_atomic_write_u64(&XLogCtl->logInsertResult, startptr);
+	pg_atomic_write_u64(&XLogCtl->logWriteResult, startptr);
+	pg_atomic_write_u64(&XLogCtl->logFlushResult, startptr);
+	
+	SpinLockAcquire(&XLogCtl->info_lck);
+	XLogCtl->InitializedUpTo = startptr;
+	XLogCtl->LogwrtRqst.Write = startptr;
+	XLogCtl->LogwrtRqst.Flush = startptr;
+	XLogCtl->InsertTimeLineID = tli;
+	LogwrtResult.Write = LogwrtResult.Flush = startptr;
+	SpinLockRelease(&XLogCtl->info_lck);
+
+	/* 
+	 * Pre-initialize WAL buffer pages 
+	 * (not sure whether this really needed)
+	 */
+	AdvanceXLInsertBuffer(InvalidXLogRecPtr, tli, true);
+}
+
+
+/*
+ * Insert incoming WAL data received by walreceiver into WAL buffers on standby
+ * server.
+ */
+int
+InsertXLogToWalBuffers(char *buf, Size len, XLogRecPtr recptr, TimeLineID tli)
+{
+	XLogCtlInsert *Insert = &XLogCtl->Insert;
+	XLogRecPtr curpos = recptr;
+	char *srcbuf = buf;
+    char *page;
+	int totalwritten = 0;
+	uint64		prevbytepos;
+
+	RefreshXLogWriteResult(LogwrtResult);
+
+	START_CRIT_SECTION();
+    WALInsertLockAcquireExclusive();
+
+	while (len > 0)
+    {
+        Size nwrite;
+
+		page = GetXLogBuffer(curpos, tli);
+
+        /*  Write into the curent page as much as possible */
+        nwrite = Min(len, XLOG_BLCKSZ - (curpos % XLOG_BLCKSZ));
+
+        memcpy(page, srcbuf, nwrite);
+		curpos += nwrite;
+        srcbuf += nwrite;
+        len -= nwrite;
+		totalwritten += nwrite;
+	}
+	pg_atomic_write_u64(&XLogCtl->logInsertResult, curpos);
+
+    WALInsertLockRelease();
+
+	/* Update the shared state for WAL insertions */
+	SpinLockAcquire(&Insert->insertpos_lck);
+	prevbytepos = Insert->CurrBytePos;
+	Insert->CurrBytePos = XLogRecPtrToBytePos(curpos);
+	Insert->PrevBytePos = prevbytepos;
+	SpinLockRelease(&Insert->insertpos_lck);
+
+    /* Update write and flush requests to the last inserted position */
+	SpinLockAcquire(&XLogCtl->info_lck);
+	if (LogwrtResult.Write < curpos)
+		XLogCtl->LogwrtRqst.Write = curpos;
+	if (LogwrtResult.Flush < curpos)
+		XLogCtl->LogwrtRqst.Flush = curpos;
+	SpinLockRelease(&XLogCtl->info_lck);
+
+	END_CRIT_SECTION();
+
+	return totalwritten;
 }
