@@ -502,5 +502,6 @@ extern XLogRecPtr GetWalRcvFlushRecPtr(XLogRecPtr *latestChunkStart, TimeLineID 
 extern XLogRecPtr GetWalRcvWriteRecPtr(void);
 extern int	GetReplicationApplyDelay(void);
 extern int	GetReplicationTransferLatency(void);
+extern void UpdateWalRcvFlushedUpto(void);
 
 #endif							/* _WALRECEIVER_H */

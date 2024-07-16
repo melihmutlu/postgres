@@ -19,5 +19,6 @@ extern PGDLLIMPORT int WalWriterDelay;
 extern PGDLLIMPORT int WalWriterFlushAfter;
 
 extern void WalWriterMain(char *startup_data, size_t startup_data_len) pg_attribute_noreturn();
+extern void WakeupWalWriter(void);
 
 #endif							/* _WALWRITER_H */

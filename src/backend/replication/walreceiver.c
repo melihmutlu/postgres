@@ -66,6 +66,7 @@
 #include "pgstat.h"
 #include "postmaster/auxprocess.h"
 #include "postmaster/interrupt.h"
+#include "postmaster/walwriter.h"
 #include "replication/walreceiver.h"
 #include "replication/walsender.h"
 #include "storage/ipc.h"
@@ -934,7 +935,8 @@ XLogWalRcvWrite(char *buf, Size nbytes, XLogRecPtr recptr, TimeLineID tli)
 }
 
 /*
- * Flush the log to disk.
+ * Let walwriter know that new WAL has arrived and inserted into WAL buffers.
+ * WAL data will be flushed by Walwriter once it wakes up.
  *
  * If we're in the midst of dying, it's unwise to do anything that might throw
  * an error, so we skip sending a reply in that case.
@@ -944,46 +946,30 @@ XLogWalRcvFlush(bool dying, TimeLineID tli)
 {
 	Assert(tli != 0);
 
-	if (LogstreamResult.Flush < LogstreamResult.Insert)
+	/*
+	 * Signal walwriter, the startup process, and walsender that new WAL has
+	 * arrived
+	 */
+	WakeupWalWriter();
+	WakeupRecovery();
+	if (AllowCascadeReplication())
+		WalSndWakeup(true, false);
+
+	/* Report XLOG streaming progress in PS display */
+	if (update_process_title)
 	{
-		WalRcvData *walrcv = WalRcv;
+		char		activitymsg[50];
 
-		XLogFlush(LogstreamResult.Insert);
-		
-		LogstreamResult.Flush = LogstreamResult.Write = LogstreamResult.Insert;
+		snprintf(activitymsg, sizeof(activitymsg), "streaming %X/%X",
+				LSN_FORMAT_ARGS(LogstreamResult.Write));
+		set_ps_display(activitymsg);
+	}
 
-		/* Update shared-memory status */
-		pg_atomic_write_u64(&walrcv->writtenUpto, LogstreamResult.Write);
-		SpinLockAcquire(&walrcv->mutex);
-		if (walrcv->flushedUpto < LogstreamResult.Flush)
-		{
-			walrcv->latestChunkStart = walrcv->flushedUpto;
-			walrcv->flushedUpto = LogstreamResult.Flush;
-			walrcv->receivedTLI = tli;
-		}
-		SpinLockRelease(&walrcv->mutex);
-
-		/* Signal the startup process and walsender that new WAL has arrived */
-		WakeupRecovery();
-		if (AllowCascadeReplication())
-			WalSndWakeup(true, false);
-
-		/* Report XLOG streaming progress in PS display */
-		if (update_process_title)
-		{
-			char		activitymsg[50];
-
-			snprintf(activitymsg, sizeof(activitymsg), "streaming %X/%X",
-					 LSN_FORMAT_ARGS(LogstreamResult.Write));
-			set_ps_display(activitymsg);
-		}
-
-		/* Also let the primary know that we made some progress */
-		if (!dying)
-		{
-			XLogWalRcvSendReply(false, false);
-			XLogWalRcvSendHSFeedback(false);
-		}
+	/* Also let the primary know that we made some progress */
+	if (!dying)
+	{
+		XLogWalRcvSendReply(false, false);
+		XLogWalRcvSendHSFeedback(false);
 	}
 }
 
