@@ -271,3 +271,10 @@ WalWriterMain(char *startup_data, size_t startup_data_len)
 						 WAIT_EVENT_WAL_WRITER_MAIN);
 	}
 }
+
+void
+WakeupWalWriter(void)
+{
+	if (ProcGlobal->walwriterLatch)
+		SetLatch(ProcGlobal->walwriterLatch);
+}

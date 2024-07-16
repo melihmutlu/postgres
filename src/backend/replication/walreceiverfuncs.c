@@ -345,6 +345,29 @@ GetWalRcvFlushRecPtr(XLogRecPtr *latestChunkStart, TimeLineID *receiveTLI)
 }
 
 /*
+ * This is called by walwriter process to update walreceiver's flushedUpto
+ * position. 
+ * 
+ * As walwriter is not reponsible for flushing WAL from buffers to
+ * disk on standby servers, walreceiver does not know the latest flush
+ * position.
+ */
+void
+UpdateWalRcvFlushedUpto(void)
+{
+	WalRcvData *walrcv = WalRcv;
+	XLogRecPtr	recptr;
+
+	recptr = GetFlushRecPtr(NULL);
+
+	pg_atomic_write_u64(&walrcv->writtenUpto, GetXLogWriteRecPtr());
+	SpinLockAcquire(&walrcv->mutex);
+	walrcv->latestChunkStart = walrcv->flushedUpto;
+	walrcv->flushedUpto = recptr;
+	SpinLockRelease(&walrcv->mutex);
+}
+
+/*
  * Returns the last+1 byte position that walreceiver has written.
  * This returns a recently written value without taking a lock.
  */

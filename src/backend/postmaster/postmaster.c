@@ -3159,7 +3159,7 @@ LaunchMissingBackgroundProcesses(void)
 	 * WAL writer is needed only in normal operation (else we cannot be
 	 * writing any new WAL).
 	 */
-	if (WalWriterPID == 0 && pmState == PM_RUN)
+	if (WalWriterPID == 0 && (pmState == PM_RUN || pmState == PM_HOT_STANDBY))
 		WalWriterPID = StartChildProcess(B_WAL_WRITER);
 
 	/*

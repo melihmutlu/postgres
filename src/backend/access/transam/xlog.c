@@ -3007,8 +3007,12 @@ XLogBackgroundFlush(void)
 
 	flexible = !WalRcvStreaming() ? false : true; 
 
-	/* back off to last completed page boundary */
-	WriteRqst.Write -= WriteRqst.Write % XLOG_BLCKSZ;
+	/*
+	 * Back off to last completed page boundary unless it's a streaming replication.
+	 * In streaming replication case, walreceiver needs to write all incoming WAL data.
+	 */
+	if (!WalRcvStreaming())
+		WriteRqst.Write -= WriteRqst.Write % XLOG_BLCKSZ;
 	
 	/* if we have already flushed that far, consider async commit records */
 	RefreshXLogWriteResult(LogwrtResult);
@@ -3111,6 +3115,11 @@ XLogBackgroundFlush(void)
 	 */
 	AdvanceXLInsertBuffer(InvalidXLogRecPtr, insertTLI, true);
 
+	if (RecoveryInProgress())
+	{
+		UpdateWalRcvFlushedUpto();
+		WakeupRecovery();
+	}
 	/*
 	 * If we determined that we need to write data, but somebody else
 	 * wrote/flushed already, it should be considered as being active, to
@@ -9562,7 +9571,7 @@ InsertXLogToWalBuffers(char *buf, Size len, XLogRecPtr recptr, TimeLineID tli)
 	Insert->CurrBytePos = XLogRecPtrToBytePos(curpos);
 	Insert->PrevBytePos = prevbytepos;
 	SpinLockRelease(&Insert->insertpos_lck);
-
+	
     /* Update write and flush requests to the last inserted position */
 	SpinLockAcquire(&XLogCtl->info_lck);
 	if (LogwrtResult.Write < curpos)
