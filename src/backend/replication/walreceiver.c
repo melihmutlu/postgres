@@ -54,6 +54,7 @@
 #include "access/htup_details.h"
 #include "access/timeline.h"
 #include "access/transam.h"
+#include "access/xlog.h"
 #include "access/xlog_internal.h"
 #include "access/xlogarchive.h"
 #include "access/xlogrecovery.h"
@@ -103,10 +104,11 @@ static XLogSegNo recvSegNo = 0;
 
 /*
  * LogstreamResult indicates the byte positions that we have already
- * written/fsynced.
+ * inserted/written/fsynced.
  */
 static struct
 {
+	XLogRecPtr	Insert;			/* last byte + 1 inserted to buffers in the standby */
 	XLogRecPtr	Write;			/* last byte + 1 written out in the standby */
 	XLogRecPtr	Flush;			/* last byte + 1 flushed in the standby */
 }			LogstreamResult;
@@ -139,7 +141,6 @@ static void XLogWalRcvProcessMsg(unsigned char type, char *buf, Size len,
 static void XLogWalRcvWrite(char *buf, Size nbytes, XLogRecPtr recptr,
 							TimeLineID tli);
 static void XLogWalRcvFlush(bool dying, TimeLineID tli);
-static void XLogWalRcvClose(XLogRecPtr recptr, TimeLineID tli);
 static void XLogWalRcvSendReply(bool force, bool requestReply);
 static void XLogWalRcvSendHSFeedback(bool immed);
 static void ProcessWalSndrMessage(XLogRecPtr walEnd, TimestampTz sendTime);
@@ -254,6 +255,12 @@ WalReceiverMain(char *startup_data, size_t startup_data_len)
 	is_temp_slot = walrcv->is_temp_slot;
 	startpoint = walrcv->receiveStart;
 	startpointTLI = walrcv->receiveStartTLI;
+
+	/*
+	 * Walreceiver will start receiving WAL after startpoint, make xlog infra
+	 * ready accodingly.
+	 */
+	InitializeXLogForStandby(startpoint, startpointTLI);
 
 	/*
 	 * At most one of is_temp_slot and slotname can be set; otherwise,
@@ -905,83 +912,25 @@ XLogWalRcvProcessMsg(unsigned char type, char *buf, Size len, TimeLineID tli)
 }
 
 /*
- * Write XLOG data to disk.
+ * Write XLOG data to WAL buffers.
  */
 static void
 XLogWalRcvWrite(char *buf, Size nbytes, XLogRecPtr recptr, TimeLineID tli)
 {
-	int			startoff;
 	int			byteswritten;
 
 	Assert(tli != 0);
 
 	while (nbytes > 0)
 	{
-		int			segbytes;
+		byteswritten = InsertXLogToWalBuffers(buf, nbytes, recptr, tli);
 
-		/* Close the current segment if it's completed */
-		if (recvFile >= 0 && !XLByteInSeg(recptr, recvSegNo, wal_segment_size))
-			XLogWalRcvClose(recptr, tli);
-
-		if (recvFile < 0)
-		{
-			/* Create/use new log file */
-			XLByteToSeg(recptr, recvSegNo, wal_segment_size);
-			recvFile = XLogFileInit(recvSegNo, tli);
-			recvFileTLI = tli;
-		}
-
-		/* Calculate the start offset of the received logs */
-		startoff = XLogSegmentOffset(recptr, wal_segment_size);
-
-		if (startoff + nbytes > wal_segment_size)
-			segbytes = wal_segment_size - startoff;
-		else
-			segbytes = nbytes;
-
-		/* OK to write the logs */
-		errno = 0;
-
-		byteswritten = pg_pwrite(recvFile, buf, segbytes, (off_t) startoff);
-		if (byteswritten <= 0)
-		{
-			char		xlogfname[MAXFNAMELEN];
-			int			save_errno;
-
-			/* if write didn't set errno, assume no disk space */
-			if (errno == 0)
-				errno = ENOSPC;
-
-			save_errno = errno;
-			XLogFileName(xlogfname, recvFileTLI, recvSegNo, wal_segment_size);
-			errno = save_errno;
-			ereport(PANIC,
-					(errcode_for_file_access(),
-					 errmsg("could not write to WAL segment %s "
-							"at offset %d, length %lu: %m",
-							xlogfname, startoff, (unsigned long) segbytes)));
-		}
-
-		/* Update state for write */
 		recptr += byteswritten;
-
 		nbytes -= byteswritten;
 		buf += byteswritten;
 
-		LogstreamResult.Write = recptr;
+		LogstreamResult.Insert = recptr;
 	}
-
-	/* Update shared-memory status */
-	pg_atomic_write_u64(&WalRcv->writtenUpto, LogstreamResult.Write);
-
-	/*
-	 * Close the current segment if it's fully written up in the last cycle of
-	 * the loop, to create its archive notification file soon. Otherwise WAL
-	 * archiving of the segment will be delayed until any data in the next
-	 * segment is received and written.
-	 */
-	if (recvFile >= 0 && !XLByteInSeg(recptr, recvSegNo, wal_segment_size))
-		XLogWalRcvClose(recptr, tli);
 }
 
 /*
@@ -995,15 +944,16 @@ XLogWalRcvFlush(bool dying, TimeLineID tli)
 {
 	Assert(tli != 0);
 
-	if (LogstreamResult.Flush < LogstreamResult.Write)
+	if (LogstreamResult.Flush < LogstreamResult.Insert)
 	{
 		WalRcvData *walrcv = WalRcv;
 
-		issue_xlog_fsync(recvFile, recvSegNo, tli);
-
-		LogstreamResult.Flush = LogstreamResult.Write;
+		XLogFlush(LogstreamResult.Insert);
+		
+		LogstreamResult.Flush = LogstreamResult.Write = LogstreamResult.Insert;
 
 		/* Update shared-memory status */
+		pg_atomic_write_u64(&walrcv->writtenUpto, LogstreamResult.Write);
 		SpinLockAcquire(&walrcv->mutex);
 		if (walrcv->flushedUpto < LogstreamResult.Flush)
 		{
@@ -1038,53 +988,6 @@ XLogWalRcvFlush(bool dying, TimeLineID tli)
 }
 
 /*
- * Close the current segment.
- *
- * Flush the segment to disk before closing it. Otherwise we have to
- * reopen and fsync it later.
- *
- * Create an archive notification file since the segment is known completed.
- */
-static void
-XLogWalRcvClose(XLogRecPtr recptr, TimeLineID tli)
-{
-	char		xlogfname[MAXFNAMELEN];
-
-	Assert(recvFile >= 0 && !XLByteInSeg(recptr, recvSegNo, wal_segment_size));
-	Assert(tli != 0);
-
-	/*
-	 * fsync() and close current file before we switch to next one. We would
-	 * otherwise have to reopen this file to fsync it later
-	 */
-	XLogWalRcvFlush(false, tli);
-
-	XLogFileName(xlogfname, recvFileTLI, recvSegNo, wal_segment_size);
-
-	/*
-	 * XLOG segment files will be re-read by recovery in startup process soon,
-	 * so we don't advise the OS to release cache pages associated with the
-	 * file like XLogFileClose() does.
-	 */
-	if (close(recvFile) != 0)
-		ereport(PANIC,
-				(errcode_for_file_access(),
-				 errmsg("could not close WAL segment %s: %m",
-						xlogfname)));
-
-	/*
-	 * Create .done file forcibly to prevent the streamed segment from being
-	 * archived later.
-	 */
-	if (XLogArchiveMode != ARCHIVE_MODE_ALWAYS)
-		XLogArchiveForceDone(xlogfname);
-	else
-		XLogArchiveNotify(xlogfname);
-
-	recvFile = -1;
-}
-
-/*
  * Send reply message to primary, indicating our current WAL locations, oldest
  * xmin and the current time.
  *
@@ -1114,6 +1017,10 @@ XLogWalRcvSendReply(bool force, bool requestReply)
 
 	/* Get current timestamp. */
 	now = GetCurrentTimestamp();
+
+	/* Update latest positions */
+	LogstreamResult.Write = GetXLogWriteRecPtr();
+	LogstreamResult.Flush = GetFlushRecPtr(NULL);
 
 	/*
 	 * We can compare the write and flush positions to the last message we
