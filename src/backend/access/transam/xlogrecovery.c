@@ -3404,8 +3404,13 @@ retry:
 	io_start = pgstat_prepare_io_time(track_io_timing);
 
 	pgstat_report_wait_start(WAIT_EVENT_WAL_READ);
-	r = pg_pread(readFile, readBuf, XLOG_BLCKSZ, (off_t) readOff);
-	if (r != XLOG_BLCKSZ)
+
+	r = WALReadFromBuffers(readBuf, targetPagePtr, readLen, curFileTLI);
+	if (r < readLen)
+	{
+		r = pg_pread(readFile, readBuf+r, readLen-r, (off_t) readOff+r);
+	}
+	if (r == 0)
 	{
 		char		fname[MAXFNAMELEN];
 		int			save_errno = errno;

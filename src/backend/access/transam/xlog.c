@@ -1753,7 +1753,8 @@ WALReadFromBuffers(char *dstbuf, XLogRecPtr startptr, Size count,
 	XLogRecPtr	inserted;
 	Size		nbytes = count;
 
-	if (RecoveryInProgress() || tli != GetWALInsertionTimeLine())
+	if ((RecoveryInProgress() && !WalRcvStreaming()) ||
+		tli != GetWALInsertionTimeLine())
 		return 0;
 
 	Assert(!XLogRecPtrIsInvalid(startptr));
