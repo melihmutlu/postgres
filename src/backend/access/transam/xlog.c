@@ -2309,6 +2309,7 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
 	bool		ispartialpage;
 	bool		last_iteration;
 	bool		finishing_seg;
+	bool		full_circle;
 	int			curridx;
 	int			npages;
 	int			startidx;
@@ -2410,8 +2411,14 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
 		finishing_seg = !ispartialpage &&
 			(startoffset + npages * XLOG_BLCKSZ) >= wal_segment_size;
 
+		/* 
+		 * Reaching the buffer right before the start buffer means that we
+		 * completed a full cycly in our circular wal buffers.
+		 */
+		full_circle = curridx == (startidx - 1);
+
 		if (last_iteration ||
-			curridx == XLogCtl->XLogCacheBlck ||
+			full_circle ||
 			finishing_seg)
 		{
 			char	   *from;
@@ -2419,9 +2426,36 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
 			Size		nleft;
 			ssize_t		written;
 			instr_time	start;
+			struct iovec iov[2];	
+			int 		iovcnt;
+
+			if (curridx < startidx)
+			{
+				/* 
+				 * From start to the end until the next page is not contiguous
+				 * in memory anymore.
+				 */
+				iov[0].iov_base = XLogCtl->pages + startidx * (Size) XLOG_BLCKSZ;
+    			iov[0].iov_len = (XLogCtl->XLogCacheBlck - startidx + 1) * (Size) XLOG_BLCKSZ;
+
+				/* From first wal buffer to the current buffer */
+    			iov[1].iov_base = XLogCtl->pages;
+    			iov[1].iov_len = (curridx + 1) * (Size) XLOG_BLCKSZ;
+
+				iovcnt = 2;
+
+				//elog(LOG, "curr %d, start %d, XLogCacheBlck %d, npgaes %d", curridx, startidx, XLogCtl->XLogCacheBlck, npages);
+				Assert(curridx + 1 + XLogCtl->XLogCacheBlck - startidx + 1 == npages);
+			}
+			else
+			{
+				/* No cycle case */
+				iov[0].iov_base = XLogCtl->pages + startidx * (Size) XLOG_BLCKSZ;;
+    			iov[0].iov_len = npages * (Size) XLOG_BLCKSZ;
+				iovcnt = 1;
+			}
 
 			/* OK to write the page(s) */
-			from = XLogCtl->pages + startidx * (Size) XLOG_BLCKSZ;
 			nbytes = npages * (Size) XLOG_BLCKSZ;
 			nleft = nbytes;
 			do
@@ -2435,7 +2469,7 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
 					INSTR_TIME_SET_ZERO(start);
 
 				pgstat_report_wait_start(WAIT_EVENT_WAL_WRITE);
-				written = pg_pwrite(openLogFile, from, nleft, startoffset);
+				written = pg_pwritev(openLogFile, iov, iovcnt, startoffset);
 				pgstat_report_wait_end();
 
 				/*
