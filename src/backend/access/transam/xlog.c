@@ -2313,6 +2313,8 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
 	int			npages;
 	int			startidx;
 	uint32		startoffset;
+	ssize_t		total_write;
+	ssize_t		expected_write;
 
 	/* We should always be inside a critical section here */
 	Assert(CritSectionCount > 0);
@@ -2342,6 +2344,13 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
 	 */
 	curridx = XLogRecPtrToBufIdx(LogwrtResult.Write);
 
+	if (WriteRqst.Write > LogwrtResult.Write)
+	{
+		expected_write = WriteRqst.Write - LogwrtResult.Write;
+		elog(LOG, "BEFORE %ld", WriteRqst.Write - LogwrtResult.Write);
+	}
+
+	total_write = 0;
 	while (LogwrtResult.Write < WriteRqst.Write)
 	{
 		/*
@@ -2436,6 +2445,7 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
 
 				pgstat_report_wait_start(WAIT_EVENT_WAL_WRITE);
 				written = pg_pwrite(openLogFile, from, nleft, startoffset);
+				elog(LOG, "WROTE %d pages, %ld bytes, last %d, end %d, finishing %d", npages, written, last_iteration, curridx == XLogCtl->XLogCacheBlck, finishing_seg);
 				pgstat_report_wait_end();
 
 				/*
@@ -2472,6 +2482,7 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
 				nleft -= written;
 				from += written;
 				startoffset += written;
+				total_write += written;
 			} while (nleft > 0);
 
 			npages = 0;
@@ -2532,6 +2543,16 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
 		if (flexible && npages == 0)
 			break;
 	}
+	
+	if (expected_write > total_write)
+		expected_write = total_write;
+
+
+	elog(LOG, "AFTER %ld", total_write);
+	PendingWalStats.wal_written_bytes += total_write;
+	PendingWalStats.wal_real_bytes += expected_write;
+
+	Assert(expected_write <= total_write);
 
 	Assert(npages == 0);
 

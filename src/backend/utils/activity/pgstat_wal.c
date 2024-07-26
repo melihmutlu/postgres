@@ -119,6 +119,8 @@ pgstat_flush_wal(bool nowait)
 	WALSTAT_ACC(wal_sync, PendingWalStats);
 	WALSTAT_ACC_INSTR_TIME(wal_write_time);
 	WALSTAT_ACC_INSTR_TIME(wal_sync_time);
+	WALSTAT_ACC(wal_real_bytes, PendingWalStats);
+	WALSTAT_ACC(wal_written_bytes, PendingWalStats);	
 #undef WALSTAT_ACC_INSTR_TIME
 #undef WALSTAT_ACC
 

@@ -439,6 +439,8 @@ typedef struct PgStat_WalStats
 	PgStat_Counter wal_write_time;
 	PgStat_Counter wal_sync_time;
 	TimestampTz stat_reset_timestamp;
+	uint64		wal_real_bytes;
+	uint64		wal_written_bytes;
 } PgStat_WalStats;
 
 /*
@@ -454,6 +456,8 @@ typedef struct PgStat_PendingWalStats
 	PgStat_Counter wal_sync;
 	instr_time	wal_write_time;
 	instr_time	wal_sync_time;
+	uint64	wal_real_bytes;
+	uint64	wal_written_bytes;
 } PgStat_PendingWalStats;
 
 

@@ -1468,7 +1468,7 @@ pg_stat_get_io(PG_FUNCTION_ARGS)
 Datum
 pg_stat_get_wal(PG_FUNCTION_ARGS)
 {
-#define PG_STAT_GET_WAL_COLS	9
+#define PG_STAT_GET_WAL_COLS	11
 	TupleDesc	tupdesc;
 	Datum		values[PG_STAT_GET_WAL_COLS] = {0};
 	bool		nulls[PG_STAT_GET_WAL_COLS] = {0};
@@ -1495,6 +1495,10 @@ pg_stat_get_wal(PG_FUNCTION_ARGS)
 					   FLOAT8OID, -1, 0);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 9, "stats_reset",
 					   TIMESTAMPTZOID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 10, "wal_real_bytes",
+					   NUMERICOID, -1, 0);
+		TupleDescInitEntry(tupdesc, (AttrNumber) 11, "wal_written_bytes",
+					   NUMERICOID, -1, 0);
 
 	BlessTupleDesc(tupdesc);
 
@@ -1521,6 +1525,20 @@ pg_stat_get_wal(PG_FUNCTION_ARGS)
 	values[7] = Float8GetDatum(((double) wal_stats->wal_sync_time) / 1000.0);
 
 	values[8] = TimestampTzGetDatum(wal_stats->stat_reset_timestamp);
+
+	memset(buf, 0, sizeof(buf));
+	snprintf(buf, sizeof buf, UINT64_FORMAT, wal_stats->wal_real_bytes);
+	values[9] = DirectFunctionCall3(numeric_in,
+									CStringGetDatum(buf),
+									ObjectIdGetDatum(0),
+									Int32GetDatum(-1));
+
+	memset(buf, 0, sizeof(buf));
+	snprintf(buf, sizeof buf, UINT64_FORMAT, wal_stats->wal_written_bytes);
+	values[10] = DirectFunctionCall3(numeric_in,
+									CStringGetDatum(buf),
+									ObjectIdGetDatum(0),
+									Int32GetDatum(-1));
 
 	/* Returns the record as Datum */
 	PG_RETURN_DATUM(HeapTupleGetDatum(heap_form_tuple(tupdesc, values, nulls)));
