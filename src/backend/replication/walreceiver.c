@@ -140,7 +140,7 @@ static void WalRcvDie(int code, Datum arg);
 static void XLogWalRcvProcessMsg(unsigned char type, char *buf, Size len,
 								 TimeLineID tli);
 static void XLogWalRcvWrite(char *buf, Size nbytes, XLogRecPtr recptr,
-							TimeLineID tli);
+							XLogRecPtr upto, TimeLineID tli);
 static void XLogWalRcvFlush(bool dying, TimeLineID tli);
 static void XLogWalRcvSendReply(bool force, bool requestReply);
 static void XLogWalRcvSendHSFeedback(bool immed);
@@ -850,6 +850,7 @@ XLogWalRcvProcessMsg(unsigned char type, char *buf, Size len, TimeLineID tli)
 	int			hdrlen;
 	XLogRecPtr	dataStart;
 	XLogRecPtr	walEnd;
+	XLogRecPtr	flushedWal;
 	TimestampTz sendTime;
 	bool		replyRequested;
 
@@ -859,7 +860,7 @@ XLogWalRcvProcessMsg(unsigned char type, char *buf, Size len, TimeLineID tli)
 			{
 				StringInfoData incoming_message;
 
-				hdrlen = sizeof(int64) + sizeof(int64) + sizeof(int64);
+				hdrlen = sizeof(int64) + sizeof(int64) + sizeof(int64) + sizeof(int64);
 				if (len < hdrlen)
 					ereport(ERROR,
 							(errcode(ERRCODE_PROTOCOL_VIOLATION),
@@ -871,12 +872,13 @@ XLogWalRcvProcessMsg(unsigned char type, char *buf, Size len, TimeLineID tli)
 				/* read the fields */
 				dataStart = pq_getmsgint64(&incoming_message);
 				walEnd = pq_getmsgint64(&incoming_message);
+				flushedWal = pq_getmsgint64(&incoming_message);
 				sendTime = pq_getmsgint64(&incoming_message);
 				ProcessWalSndrMessage(walEnd, sendTime);
 
 				buf += hdrlen;
 				len -= hdrlen;
-				XLogWalRcvWrite(buf, len, dataStart, tli);
+				XLogWalRcvWrite(buf, len, dataStart, flushedWal, tli);
 				break;
 			}
 		case 'k':				/* Keepalive */
@@ -916,9 +918,10 @@ XLogWalRcvProcessMsg(unsigned char type, char *buf, Size len, TimeLineID tli)
  * Write XLOG data to WAL buffers.
  */
 static void
-XLogWalRcvWrite(char *buf, Size nbytes, XLogRecPtr recptr, TimeLineID tli)
+XLogWalRcvWrite(char *buf, Size nbytes, XLogRecPtr recptr, XLogRecPtr upto, TimeLineID tli)
 {
 	int			byteswritten;
+	XLogRecPtr	uptoRqst;
 
 	Assert(tli != 0);
 
@@ -932,6 +935,10 @@ XLogWalRcvWrite(char *buf, Size nbytes, XLogRecPtr recptr, TimeLineID tli)
 
 		LogstreamResult.Insert = recptr;
 	}
+
+	/* Update wrtRqst for both write and flush */
+	uptoRqst = recptr < upto ? recptr : upto;
+	UpdateXLogWrtRqst(uptoRqst, uptoRqst);
 }
 
 /*
@@ -991,6 +998,7 @@ XLogWalRcvSendReply(bool force, bool requestReply)
 {
 	static XLogRecPtr writePtr = 0;
 	static XLogRecPtr flushPtr = 0;
+	static XLogRecPtr insertPtr = 0;
 	XLogRecPtr	applyPtr;
 	TimestampTz now;
 
@@ -1005,6 +1013,7 @@ XLogWalRcvSendReply(bool force, bool requestReply)
 	now = GetCurrentTimestamp();
 
 	/* Update latest positions */
+	LogstreamResult.Insert = GetLogInsertRecPtr();
 	LogstreamResult.Write = GetXLogWriteRecPtr();
 	LogstreamResult.Flush = GetFlushRecPtr(NULL);
 
@@ -1020,6 +1029,7 @@ XLogWalRcvSendReply(bool force, bool requestReply)
 	if (!force
 		&& writePtr == LogstreamResult.Write
 		&& flushPtr == LogstreamResult.Flush
+		&& insertPtr == LogstreamResult.Insert
 		&& now < wakeup[WALRCV_WAKEUP_REPLY])
 		return;
 
@@ -1029,20 +1039,23 @@ XLogWalRcvSendReply(bool force, bool requestReply)
 	/* Construct a new message */
 	writePtr = LogstreamResult.Write;
 	flushPtr = LogstreamResult.Flush;
+	insertPtr = LogstreamResult.Insert;
 	applyPtr = GetXLogReplayRecPtr(NULL);
 
 	resetStringInfo(&reply_message);
 	pq_sendbyte(&reply_message, 'r');
 	pq_sendint64(&reply_message, writePtr);
 	pq_sendint64(&reply_message, flushPtr);
+	pq_sendint64(&reply_message, insertPtr);
 	pq_sendint64(&reply_message, applyPtr);
 	pq_sendint64(&reply_message, GetCurrentTimestamp());
 	pq_sendbyte(&reply_message, requestReply ? 1 : 0);
 
 	/* Send it */
-	elog(DEBUG2, "sending write %X/%X flush %X/%X apply %X/%X%s",
+	elog(DEBUG2, "sending write %X/%X flush %X/%X insert %X/%X apply %X/%X%s",
 		 LSN_FORMAT_ARGS(writePtr),
 		 LSN_FORMAT_ARGS(flushPtr),
+		 LSN_FORMAT_ARGS(insertPtr),
 		 LSN_FORMAT_ARGS(applyPtr),
 		 requestReply ? " (reply requested)" : "");
 

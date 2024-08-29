@@ -335,7 +335,7 @@ writeTimeLineHistoryFile(StreamCtl *stream, char *filename, char *content)
 static bool
 sendFeedback(PGconn *conn, XLogRecPtr blockpos, TimestampTz now, bool replyRequested)
 {
-	char		replybuf[1 + 8 + 8 + 8 + 8 + 1];
+	char		replybuf[1 + 8 + 8 + 8 + 8 + 8 + 1];
 	int			len = 0;
 
 	replybuf[len] = 'r';
@@ -346,6 +346,8 @@ sendFeedback(PGconn *conn, XLogRecPtr blockpos, TimestampTz now, bool replyReque
 		fe_sendint64(lastFlushPosition, &replybuf[len]);	/* flush */
 	else
 		fe_sendint64(InvalidXLogRecPtr, &replybuf[len]);	/* flush */
+	len += 8;
+	fe_sendint64(InvalidXLogRecPtr, &replybuf[len]);	/* insert */
 	len += 8;
 	fe_sendint64(InvalidXLogRecPtr, &replybuf[len]);	/* apply */
 	len += 8;
@@ -1059,6 +1061,7 @@ ProcessXLogDataMsg(PGconn *conn, StreamCtl *stream, char *copybuf, int len,
 	hdr_len = 1;				/* msgtype 'w' */
 	hdr_len += 8;				/* dataStart */
 	hdr_len += 8;				/* walEnd */
+	hdr_len += 8;				/* latest flushed point */
 	hdr_len += 8;				/* sendTime */
 	if (len < hdr_len)
 	{
