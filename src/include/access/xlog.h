@@ -248,6 +248,7 @@ extern void UpdateFullPageWrites(void);
 extern void GetFullPageWriteInfo(XLogRecPtr *RedoRecPtr_p, bool *doPageWrites_p);
 extern XLogRecPtr GetRedoRecPtr(void);
 extern XLogRecPtr GetInsertRecPtr(void);
+extern XLogRecPtr GetLogInsertRecPtr(void);
 extern XLogRecPtr GetFlushRecPtr(TimeLineID *insertTLI);
 extern TimeLineID GetWALInsertionTimeLine(void);
 extern TimeLineID GetWALInsertionTimeLineIfSet(void);
@@ -272,6 +273,7 @@ extern void XLogShutdownWalRcv(void);
 extern int InsertXLogToWalBuffers(char *buf, Size len,
 										XLogRecPtr recptr, TimeLineID tli);
 extern void InitializeXLogForStandby(XLogRecPtr startptr, TimeLineID tli);
+extern void UpdateXLogWrtRqst(XLogRecPtr write, XLogRecPtr flush);
 
 /*
  * Routines to start, stop, and get status of a base backup.

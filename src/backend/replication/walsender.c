@@ -2391,6 +2391,7 @@ ProcessStandbyReplyMessage(void)
 {
 	XLogRecPtr	writePtr,
 				flushPtr,
+				insertPtr,
 				applyPtr;
 	bool		replyRequested;
 	TimeOffset	writeLag,
@@ -2405,6 +2406,7 @@ ProcessStandbyReplyMessage(void)
 	/* the caller already consumed the msgtype byte */
 	writePtr = pq_getmsgint64(&reply_message);
 	flushPtr = pq_getmsgint64(&reply_message);
+	insertPtr = pq_getmsgint64(&reply_message);
 	applyPtr = pq_getmsgint64(&reply_message);
 	replyTime = pq_getmsgint64(&reply_message);
 	replyRequested = pq_getmsgbyte(&reply_message);
@@ -2416,9 +2418,10 @@ ProcessStandbyReplyMessage(void)
 		/* Copy because timestamptz_to_str returns a static buffer */
 		replyTimeStr = pstrdup(timestamptz_to_str(replyTime));
 
-		elog(DEBUG2, "write %X/%X flush %X/%X apply %X/%X%s reply_time %s",
+		elog(DEBUG2, "write %X/%X flush %X/%X insert %X/%X apply %X/%X%s reply_time %s",
 			 LSN_FORMAT_ARGS(writePtr),
 			 LSN_FORMAT_ARGS(flushPtr),
+			 LSN_FORMAT_ARGS(insertPtr),
 			 LSN_FORMAT_ARGS(applyPtr),
 			 replyRequested ? " (reply requested)" : "",
 			 replyTimeStr);
@@ -3069,9 +3072,11 @@ static void
 XLogSendPhysical(void)
 {
 	XLogRecPtr	SendRqstPtr;
+	XLogRecPtr	flushPtr;
 	XLogRecPtr	startptr;
 	XLogRecPtr	endptr;
-	Size		nbytes;
+	Size		nbytesUntilFlush;
+	Size		nbytesAfterFlush;
 	XLogSegNo	segno;
 	WALReadError errinfo;
 	Size		rbytes;
@@ -3085,6 +3090,11 @@ XLogSendPhysical(void)
 		WalSndCaughtUp = true;
 		return;
 	}
+
+	if (am_cascading_walsender)
+		flushPtr = GetStandbyFlushRecPtr(NULL);
+	else
+		flushPtr = GetFlushRecPtr(NULL);
 
 	/* Figure out how far we can safely send the WAL. */
 	if (sendTimeLineIsHistoric)
@@ -3163,14 +3173,18 @@ XLogSendPhysical(void)
 		/*
 		 * Streaming the current timeline on a primary.
 		 *
-		 * Attempt to send all data that's already been written out and
-		 * fsync'd to disk.  We cannot go further than what's been written out
-		 * given the current implementation of WALRead().  And in any case
-		 * it's unsafe to send WAL that is not securely down to disk on the
-		 * primary: if the primary subsequently crashes and restarts, standbys
-		 * must not have applied any WAL that got lost on the primary.
+		 * Attempt to send all data that's inserted into WAL buffers. They 
+		 * don't have to be written or fsynce'd. We will try to go further
+		 * than what's been written out by reading WAL from buffers via
+		 * WALReadFromBuffers(). If we cannot succeed. then we can only try to
+		 * read until the latest flushed position given the current
+		 * implementation of WALRead().
+		 * 
+		 * Standby will only write/fsync WAL upto flushPtr. Any WAL further
+		 * that flushPtr will only be inserted into WAL buffers and will not
+		 * be writtend/fsync'd on standby until Walsender ask to do so.
 		 */
-		SendRqstPtr = GetFlushRecPtr(NULL);
+		SendRqstPtr = GetInsertRecPtr();
 	}
 
 	/*
@@ -3233,7 +3247,14 @@ XLogSendPhysical(void)
 
 	/* Do we have any work to do? */
 	Assert(sentPtr <= SendRqstPtr);
-	if (SendRqstPtr <= sentPtr)
+
+	/*
+	 * Standby might have received WAL upto SendRqstPtr but not flushed it yet,
+	 * so we can't say that it has caught up unless standby's flush position is
+	 * not behind primary's flush position.
+	 */
+	if (MyWalSnd->flush >= flushPtr &&
+		sentPtr >= SendRqstPtr)
 	{
 		WalSndCaughtUp = true;
 		return;
@@ -3270,44 +3291,75 @@ XLogSendPhysical(void)
 		WalSndCaughtUp = false;
 	}
 
-	nbytes = endptr - startptr;
-	Assert(nbytes <= MAX_SEND_SIZE);
+	/*
+	 * Older WALs are more likely to be evicted from buffers and written to
+	 * disk. For any WAL before latest flush position, we first try to read
+	 * from WAL buffers and then from disk. WALs after the flush position
+	 * cannot be found on disk, so we only try to read such WALs from buffers. 
+	 */
+	nbytesUntilFlush = 0;
+	nbytesAfterFlush = 0;
+	if (flushPtr > endptr)
+		nbytesUntilFlush = endptr - startptr;
+	else if (flushPtr > startptr)
+	{
+		nbytesUntilFlush = flushPtr - startptr;
+		nbytesAfterFlush = endptr - flushPtr;
+	}
+	else
+		nbytesAfterFlush = endptr - startptr;
 
 	/*
 	 * OK to read and send the slice.
 	 */
 	resetStringInfo(&output_message);
 	pq_sendbyte(&output_message, 'w');
-
 	pq_sendint64(&output_message, startptr);	/* dataStart */
-	pq_sendint64(&output_message, SendRqstPtr); /* walEnd */
+	pq_sendint64(&output_message, endptr); /* walEnd */
+	pq_sendint64(&output_message, flushPtr); /* latest flushed point */
 	pq_sendint64(&output_message, 0);	/* sendtime, filled in last */
 
 	/*
 	 * Read the log directly into the output buffer to avoid extra memcpy
 	 * calls.
 	 */
-	enlargeStringInfo(&output_message, nbytes);
-
+	enlargeStringInfo(&output_message, nbytesUntilFlush + nbytesAfterFlush);
 retry:
-	/* attempt to read WAL from WAL buffers first */
-	rbytes = WALReadFromBuffers(&output_message.data[output_message.len],
-								startptr, nbytes, xlogreader->seg.ws_tli);
-	output_message.len += rbytes;
-	startptr += rbytes;
-	nbytes -= rbytes;
 
-	/* now read the remaining WAL from WAL file */
-	if (nbytes > 0 &&
-		!WALRead(xlogreader,
-				 &output_message.data[output_message.len],
-				 startptr,
-				 nbytes,
-				 xlogreader->seg.ws_tli,	/* Pass the current TLI because
-											 * only WalSndSegmentOpen controls
-											 * whether new TLI is needed. */
-				 &errinfo))
-		WALReadRaiseError(&errinfo);
+	if (nbytesUntilFlush > 0)
+	{
+		/* attempt to read WAL from WAL buffers first */
+		rbytes = WALReadFromBuffers(&output_message.data[output_message.len],
+									startptr, nbytesUntilFlush, xlogreader->seg.ws_tli);
+		output_message.len += rbytes;
+		startptr += rbytes;
+		nbytesUntilFlush -= rbytes;
+
+		/* now read the remaining WAL from WAL file */
+		if (nbytesUntilFlush > 0 &&
+			!WALRead(xlogreader,
+					&output_message.data[output_message.len],
+					startptr,
+					nbytesUntilFlush,
+					xlogreader->seg.ws_tli,	/* Pass the current TLI because
+												* only WalSndSegmentOpen controls
+												* whether new TLI is needed. */
+					&errinfo))
+			WALReadRaiseError(&errinfo);
+		output_message.len += nbytesUntilFlush;
+		startptr += nbytesUntilFlush;
+	}
+
+	if (nbytesAfterFlush > 0)
+	{
+		/* attempt to read WAL from WAL buffers for the rest */
+		rbytes = WALReadFromBuffers(&output_message.data[output_message.len],
+									startptr, nbytesAfterFlush, xlogreader->seg.ws_tli);
+		output_message.len += rbytes;
+		nbytesAfterFlush -= rbytes;
+	}
+	startptr -= nbytesUntilFlush;
+	endptr -= nbytesAfterFlush;
 
 	/* See logical_read_xlog_page(). */
 	XLByteToSeg(startptr, segno, xlogreader->segcxt.ws_segsize);
@@ -3337,7 +3389,6 @@ retry:
 		}
 	}
 
-	output_message.len += nbytes;
 	output_message.data[output_message.len] = '\0';
 
 	/*
@@ -3345,7 +3396,7 @@ retry:
 	 */
 	resetStringInfo(&tmpbuf);
 	pq_sendint64(&tmpbuf, GetCurrentTimestamp());
-	memcpy(&output_message.data[1 + sizeof(int64) + sizeof(int64)],
+	memcpy(&output_message.data[1 + sizeof(int64) + sizeof(int64) + sizeof(int64)],
 		   tmpbuf.data, sizeof(int64));
 
 	pq_putmessage_noblock('d', output_message.data, output_message.len);
