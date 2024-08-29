@@ -703,7 +703,6 @@ static void ReserveXLogInsertLocation(int size, XLogRecPtr *StartPos,
 									  XLogRecPtr *EndPos, XLogRecPtr *PrevPtr);
 static bool ReserveXLogSwitch(XLogRecPtr *StartPos, XLogRecPtr *EndPos,
 							  XLogRecPtr *PrevPtr);
-static XLogRecPtr WaitXLogInsertionsToFinish(XLogRecPtr upto);
 static char *GetXLogBuffer(XLogRecPtr ptr, TimeLineID tli);
 static XLogRecPtr XLogBytePosToRecPtr(uint64 bytepos);
 static XLogRecPtr XLogBytePosToEndRecPtr(uint64 bytepos);
@@ -921,6 +920,9 @@ XLogInsertRecord(XLogRecData *rdata,
 		CopyXLogRecordToWAL(rechdr->xl_tot_len,
 							class == WALINSERT_SPECIAL_SWITCH, rdata,
 							StartPos, EndPos, insertTLI);
+
+		/* signal that we need to wakeup walsenders later */
+		WalSndWakeupRequest();
 
 		/*
 		 * Unless record is flagged as not important, update LSN of last
@@ -1499,7 +1501,7 @@ WALInsertLockUpdateInsertingAt(XLogRecPtr insertingAt)
  * uninitialized page), and the inserter might need to evict an old WAL buffer
  * to make room for a new one, which in turn requires WALWriteLock.
  */
-static XLogRecPtr
+XLogRecPtr
 WaitXLogInsertionsToFinish(XLogRecPtr upto)
 {
 	uint64		bytepos;
@@ -6478,6 +6480,17 @@ GetInsertRecPtr(void)
 	SpinLockRelease(&XLogCtl->info_lck);
 
 	return recptr;
+
+}
+
+XLogRecPtr
+GetLogInsertRecPtr(void)
+{
+	XLogRecPtr	recptr;
+
+	recptr = pg_atomic_read_membarrier_u64(&XLogCtl->logInsertResult);
+
+	return recptr;
 }
 
 /*
@@ -9554,6 +9567,8 @@ InsertXLogToWalBuffers(char *buf, Size len, XLogRecPtr recptr, TimeLineID tli)
 
         /*  Write into the curent page as much as possible */
         nwrite = Min(len, XLOG_BLCKSZ - (curpos % XLOG_BLCKSZ));
+		
+		pg_read_barrier();
 
         memcpy(page, srcbuf, nwrite);
 		curpos += nwrite;
@@ -9564,6 +9579,7 @@ InsertXLogToWalBuffers(char *buf, Size len, XLogRecPtr recptr, TimeLineID tli)
 	pg_atomic_write_u64(&XLogCtl->logInsertResult, curpos);
 
     WALInsertLockRelease();
+	END_CRIT_SECTION();
 
 	/* Update the shared state for WAL insertions */
 	SpinLockAcquire(&Insert->insertpos_lck);
@@ -9572,15 +9588,22 @@ InsertXLogToWalBuffers(char *buf, Size len, XLogRecPtr recptr, TimeLineID tli)
 	Insert->PrevBytePos = prevbytepos;
 	SpinLockRelease(&Insert->insertpos_lck);
 	
-    /* Update write and flush requests to the last inserted position */
-	SpinLockAcquire(&XLogCtl->info_lck);
-	if (LogwrtResult.Write < curpos)
-		XLogCtl->LogwrtRqst.Write = curpos;
-	if (LogwrtResult.Flush < curpos)
-		XLogCtl->LogwrtRqst.Flush = curpos;
-	SpinLockRelease(&XLogCtl->info_lck);
-
-	END_CRIT_SECTION();
-
 	return totalwritten;
+}
+
+/*
+ * Update the shared state for WAL insertions.
+ *
+ * This is used by walreceiver to control upto which point WAL needs to be
+ * writtend and flushed.
+ */
+void
+UpdateXLogWrtRqst(XLogRecPtr write, XLogRecPtr flush)
+{
+	SpinLockAcquire(&XLogCtl->info_lck);
+	if (write != InvalidXLogRecPtr)
+		XLogCtl->LogwrtRqst.Write = write;
+	if (flush != InvalidXLogRecPtr)
+		XLogCtl->LogwrtRqst.Flush = flush;
+	SpinLockRelease(&XLogCtl->info_lck);
 }
