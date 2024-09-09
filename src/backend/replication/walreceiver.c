@@ -1001,6 +1001,8 @@ XLogWalRcvFlush(bool dying, TimeLineID tli)
 
 		issue_xlog_fsync(recvFile, recvSegNo, tli);
 
+		elog(LOG, "FLUSHED, %ld", LogstreamResult.Write - LogstreamResult.Flush);
+
 		LogstreamResult.Flush = LogstreamResult.Write;
 
 		/* Update shared-memory status */
