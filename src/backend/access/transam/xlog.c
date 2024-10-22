@@ -922,8 +922,9 @@ XLogInsertRecord(XLogRecData *rdata,
 							class == WALINSERT_SPECIAL_SWITCH, rdata,
 							StartPos, EndPos, insertTLI);
 
-		/* signal that we need to wakeup walsenders later */
-		WalSndWakeupRequest();
+		// /* signal that we need to wakeup walsenders later */
+		if (StartPos - StartPos % XLOG_BLCKSZ + XLOG_BLCKSZ < EndPos)
+			WalSndWakeupRequest();
 
 		/*
 		 * Unless record is flagged as not important, update LSN of last

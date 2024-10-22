@@ -3155,7 +3155,7 @@ XLogSendPhysical(void)
 		SendRqstPtr = GetLogInsertRecPtr();
 		if (sentPtr >= SendRqstPtr)
 		{
-			SendRqstPtr = WaitXLogInsertionsToFinish(sentPtr);
+			SendRqstPtr = WaitXLogInsertionsToFinish(sentPtr + 1);
 		}
 	}
 
