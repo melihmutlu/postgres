@@ -1623,7 +1623,9 @@ CreateRelCacheContext(void)
 	if (!RelCacheContext)
 		RelCacheContext = AllocSetContextCreate(CacheMemoryContext,
 													  "RelCacheContext",
-													   ALLOCSET_DEFAULT_SIZES);
+													   ALLOCSET_DEFAULT_MINSIZE,
+													   128 * 1024,
+													   ALLOCSET_DEFAULT_MAXSIZE);
 }
 
 /*

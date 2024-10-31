@@ -716,7 +716,7 @@ CreateCacheMemoryContext(void)
 	if (!CacheMemoryContext)
 		CacheMemoryContext = AllocSetContextCreate(TopMemoryContext,
 												   "CacheMemoryContext",
-												   ALLOCSET_DEFAULT_SIZES);
+												   ALLOCSET_START_SMALL_SIZES);
 }
 
 static void
@@ -728,7 +728,9 @@ CreateCatCacheContext(void)
 	if (!CatCacheContext)
 		CatCacheContext = AllocSetContextCreate(CacheMemoryContext,
 													  "CatCacheContext",
-													   ALLOCSET_DEFAULT_SIZES);
+													   ALLOCSET_DEFAULT_MINSIZE,
+													   128 * 1024,
+													   ALLOCSET_DEFAULT_MAXSIZE);
 }
 
 /*
