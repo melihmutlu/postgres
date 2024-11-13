@@ -3052,6 +3052,7 @@ XLogBackgroundFlush(void)
 				XLogFileClose();
 			}
 		}
+
 		return false;
 	}
 
@@ -3089,7 +3090,7 @@ XLogBackgroundFlush(void)
 		WriteRqst.Flush = WriteRqst.Write;
 		lastflush = now;
 	}
-	else
+	else if (!RecoveryInProgress())
 	{
 		/* no flushing, this time round */
 		WriteRqst.Flush = 0;
@@ -6525,7 +6526,6 @@ GetInsertRecPtr(void)
 	SpinLockRelease(&XLogCtl->info_lck);
 
 	return recptr;
-
 }
 
 XLogRecPtr

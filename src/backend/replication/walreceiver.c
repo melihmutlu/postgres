@@ -95,15 +95,6 @@ static WalReceiverConn *wrconn = NULL;
 WalReceiverFunctionsType *WalReceiverFunctions = NULL;
 
 /*
- * These variables are used similarly to openLogFile/SegNo,
- * but for walreceiver to write the XLOG. recvFileTLI is the TimeLineID
- * corresponding the filename of recvFile.
- */
-static int	recvFile = -1;
-static TimeLineID recvFileTLI = 0;
-static XLogSegNo recvSegNo = 0;
-
-/*
  * LogstreamResult indicates the byte positions that we have already
  * inserted/written/fsynced.
  */
@@ -634,33 +625,6 @@ WalReceiverMain(char *startup_data, size_t startup_data_len)
 					(errmsg("primary server contains no more WAL on requested timeline %u",
 							startpointTLI)));
 
-		/*
-		 * End of WAL reached on the requested timeline. Close the last
-		 * segment, and await for new orders from the startup process.
-		 */
-		if (recvFile >= 0)
-		{
-			char		xlogfname[MAXFNAMELEN];
-
-			XLogWalRcvFlush(false, startpointTLI);
-			XLogFileName(xlogfname, recvFileTLI, recvSegNo, wal_segment_size);
-			if (close(recvFile) != 0)
-				ereport(PANIC,
-						(errcode_for_file_access(),
-						 errmsg("could not close WAL segment %s: %m",
-								xlogfname)));
-
-			/*
-			 * Create .done file forcibly to prevent the streamed segment from
-			 * being archived later.
-			 */
-			if (XLogArchiveMode != ARCHIVE_MODE_ALWAYS)
-				XLogArchiveForceDone(xlogfname);
-			else
-				XLogArchiveNotify(xlogfname);
-		}
-		recvFile = -1;
-
 		elog(DEBUG1, "walreceiver ended streaming and awaits new instructions");
 		WalRcvWaitForStartPosition(&startpoint, &startpointTLI);
 	}
@@ -953,30 +917,35 @@ XLogWalRcvFlush(bool dying, TimeLineID tli)
 {
 	Assert(tli != 0);
 
-	/*
-	 * Signal walwriter, the startup process, and walsender that new WAL has
-	 * arrived
-	 */
-	WakeupWalWriter();
-	WakeupRecovery();
-	if (AllowCascadeReplication())
-		WalSndWakeup(true, false);
+	LogstreamResult.Write = GetXLogWriteRecPtr();
+	if (GetInsertRecPtr() > LogstreamResult.Write)
+	{ 
+		/*
+		* Signal walwriter, the startup process, and walsender that new WAL has
+		* arrived
+		*/
+		WakeupWalWriter();
+		WakeupRecovery();
+		if (AllowCascadeReplication())
+			WalSndWakeup(true, false);
 
-	/* Report XLOG streaming progress in PS display */
-	if (update_process_title)
-	{
-		char		activitymsg[50];
+		LogstreamResult.Write = GetXLogWriteRecPtr();
+		/* Report XLOG streaming progress in PS display */
+		if (update_process_title)
+		{
+			char		activitymsg[50];
 
-		snprintf(activitymsg, sizeof(activitymsg), "streaming %X/%X",
-				LSN_FORMAT_ARGS(LogstreamResult.Write));
-		set_ps_display(activitymsg);
-	}
+			snprintf(activitymsg, sizeof(activitymsg), "streaming %X/%X",
+					LSN_FORMAT_ARGS(LogstreamResult.Write));
+			set_ps_display(activitymsg);
+		}
 
-	/* Also let the primary know that we made some progress */
-	if (!dying)
-	{
-		XLogWalRcvSendReply(false, false);
-		XLogWalRcvSendHSFeedback(false);
+		/* Also let the primary know that we made some progress */
+		if (!dying)
+		{
+			XLogWalRcvSendReply(false, false);
+			XLogWalRcvSendHSFeedback(false);
+		}
 	}
 }
 
