@@ -3155,7 +3155,7 @@ XLogSendPhysical(void)
 		SendRqstPtr = GetLogInsertRecPtr();
 		if (sentPtr >= SendRqstPtr)
 		{
-			SendRqstPtr = WaitXLogInsertionsToFinish(sentPtr + 1);
+			SendRqstPtr = WaitXLogInsertionsToFinish(sentPtr);
 		}
 	}
 
@@ -3219,6 +3219,11 @@ XLogSendPhysical(void)
 
 	/* Do we have any work to do? */
 	Assert(sentPtr <= SendRqstPtr);
+	if (SendRqstPtr <= sentPtr)
+	{
+		WalSndCaughtUp = true;
+		return;
+	}
 
 	/*
 	 * Standby might have received WAL upto SendRqstPtr but not flushed it yet,
