@@ -408,6 +408,8 @@ heap_fill_tuple(TupleDesc tupleDesc,
 	int			bitmask;
 	int			i;
 	int			numberOfAttributes = tupleDesc->natts;
+	int			remainingNumberofAtts = numberOfAttributes;
+
 
 #ifdef USE_ASSERT_CHECKING
 	char	   *start = data;
@@ -422,7 +424,6 @@ heap_fill_tuple(TupleDesc tupleDesc,
 	else
 	{
 		const Vector8		char0 = vector8_broadcast((const uint8) 0x00);
-		int			remainingNumberofAtts = numberOfAttributes;
 		
 		bitP = &bit[-1];
 		i = 0;
@@ -459,15 +460,32 @@ heap_fill_tuple(TupleDesc tupleDesc,
 	}
 
 	*infomask &= ~(HEAP_HASNULL | HEAP_HASVARWIDTH | HEAP_HASEXTERNAL);
-	for (i = 0; i < numberOfAttributes; i++)
+	for (i = 0; i < numberOfAttributes-remainingNumberofAtts; i++)
 	{
 		CompactAttribute *attr = TupleDescCompactAttr(tupleDesc, i);
 
-		if(bitP == NULL && isnull && isnull[i])
+		if(isnull && isnull[i])
 		{
 			*infomask |= HEAP_HASNULL;
 			continue;
 		}
+
+		/*
+		 * Do not fill NULL bitmap for these attributes again as they're
+		 * handled above by SIMD steps
+		 */
+		fill_val(attr,
+				 NULL,
+				 &bitmask,
+				 &data,
+				 infomask,
+				 values ? values[i] : PointerGetDatum(NULL),
+				 isnull ? isnull[i] : true);
+	}
+
+	for (; i < numberOfAttributes; i++)
+	{
+		CompactAttribute *attr = TupleDescCompactAttr(tupleDesc, i);
 
 		fill_val(attr,
 				 bitP ? &bitP : NULL,
