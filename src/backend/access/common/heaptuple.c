@@ -65,6 +65,7 @@
 #include "utils/expandeddatum.h"
 #include "utils/hsearch.h"
 #include "utils/memutils.h"
+#include "port/simd.h"
 
 
 /*
@@ -412,23 +413,61 @@ heap_fill_tuple(TupleDesc tupleDesc,
 	char	   *start = data;
 #endif
 
-	if (bit != NULL)
-	{
-		bitP = &bit[-1];
-		bitmask = HIGHBIT;
-	}
-	else
+	if (bit == NULL)
 	{
 		/* just to keep compiler quiet */
 		bitP = NULL;
 		bitmask = 0;
 	}
+	else
+	{
+		const Vector8		char0 = vector8_broadcast((const uint8) 0x00);
+		int			remainingNumberofAtts = numberOfAttributes;
+		
+		bitP = &bit[-1];
+		i = 0;
+		while (isnull && remainingNumberofAtts >= sizeof(Vector8))
+		{
+			Vector8 chunk;
+			Vector8 nullvec;
+			uint32 localBitMask;
+			bits8 *mask;
+
+			vector8_load(&chunk, (const uint8 *) &isnull[sizeof(Vector8)*i++]);
+			nullvec = vector8_eq(chunk, char0);
+
+			// Compute bitmask for null values
+			localBitMask = vector8_highbit_mask(nullvec);
+			mask = (bits8 *) &localBitMask;
+
+			*++bitP = mask[0];
+			*++bitP = mask[1];
+
+			remainingNumberofAtts -= sizeof(Vector8);
+		}
+
+		if (remainingNumberofAtts > 0)
+		{
+			bitP = &bit[2*i-1];
+			bitmask = HIGHBIT;
+		}
+		else
+		{
+			bitP = NULL;
+			bitmask = 0;
+		}
+	}
 
 	*infomask &= ~(HEAP_HASNULL | HEAP_HASVARWIDTH | HEAP_HASEXTERNAL);
-
 	for (i = 0; i < numberOfAttributes; i++)
 	{
 		CompactAttribute *attr = TupleDescCompactAttr(tupleDesc, i);
+
+		if(bitP == NULL && isnull && isnull[i])
+		{
+			*infomask |= HEAP_HASNULL;
+			continue;
+		}
 
 		fill_val(attr,
 				 bitP ? &bitP : NULL,
